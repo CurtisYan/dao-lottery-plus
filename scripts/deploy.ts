@@ -25,8 +25,8 @@ async function saveDeploymentInfo(contracts: Record<string, string>) {
     
     // 添加网络信息
     const networkName = hre.network.name;
-    // 使用网络名称来确定chainId
-    const chainId = networkName === 'localhost' || networkName === 'hardhat' ? 31337 : 1; // 默认本地网络为31337，其他为1
+    // 根据网络名称确定chainId
+    const chainId = networkName === 'sepolia' ? 11155111 : 31337;
     
     const deploymentData = {
       timestamp,
