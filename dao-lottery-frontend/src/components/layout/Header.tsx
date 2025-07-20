@@ -19,14 +19,15 @@ import {
   Home,
   Sparkles,
   Settings,
-  User
+  User,
+  Calendar
 } from 'lucide-react'
 
 const navigation = [
   { name: '首页', href: '/', icon: Home },
   { name: '治理', href: '/governance', icon: Vote },
   { name: '抽奖', href: '/lottery', icon: Zap },
-  { name: 'RWD', href: '/reward', icon: Zap },
+  { name: '任务', href: '/tasks', icon: Calendar },
   { name: 'NFT', href: '/nft', icon: Image },
   { name: '仪表板', href: '/dashboard', icon: BarChart3 },
 ]

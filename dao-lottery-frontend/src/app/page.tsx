@@ -29,7 +29,6 @@ import { useProposalCount } from "@/hooks/useGovernance";
 import {
   usePrizeInfo,
   useParticipants,
-  useJoinLottery,
   useIsParticipant,
 } from "@/hooks/useLottery";
 import { toast } from 'sonner'
@@ -77,10 +76,8 @@ export default function HomePage() {
     isError: isParticipantError,
     isLoading: isParticipantLoading,
   } = useParticipants();
-  const { joinLottery, isPending } = useJoinLottery();
   const { isParticipant, isError: isParticipantCheckError } =
     useIsParticipant();
-  const [joining, setJoining] = useState(false);
 
   // 处理加载和错误状态
   const isLoading = isPrizeLoading || isParticipantLoading;
@@ -127,30 +124,6 @@ export default function HomePage() {
       icon: Vote,
     },
   ];
-
-  const handleJoinLottery = async () => {
-    if (!address) {
-      toast.error('请先连接钱包');
-      return;
-    }
-
-    if (isParticipant) {
-      router.push("/lottery");
-      return;
-    }
-
-    try {
-      setJoining(true);
-      await joinLottery();
-      toast.success('成功加入抽奖!');
-      router.push("/lottery");
-    } catch (error) {
-      console.error("加入抽奖失败:", error);
-      toast.error((error as Error).message);
-    } finally {
-      setJoining(false);
-    }
-  };
 
   // 如果有错误，显示重试按钮
   const handleRetry = () => {
@@ -212,7 +185,7 @@ export default function HomePage() {
               {/* 添加错误重试按钮 */}
               {hasError && (
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="lg"
                   className="w-full sm:w-auto"
                   onClick={handleRetry}
@@ -325,24 +298,6 @@ export default function HomePage() {
                 <Button
                   size="lg"
                   glow
-                  onClick={handleJoinLottery}
-                  disabled={joining || isPending}
-                >
-                  {joining || isPending ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      处理中...
-                    </>
-                  ) : (
-                    <>
-                      连接钱包开始
-                      <Sparkles className="w-4 h-4 ml-2" />
-                    </>
-                  )}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="lg"
                   onClick={() => router.push("/governance")}
                 >
                   了解更多
