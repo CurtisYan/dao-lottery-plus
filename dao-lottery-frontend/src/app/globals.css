@@ -1,0 +1,131 @@
+@import "tailwindcss";
+
+/* Cyberpunk全局样式 */
+@layer base {
+  * {
+    border-color: rgb(26 27 58);
+  }
+  
+  html {
+    color-scheme: dark;
+  }
+  
+  body {
+    background-color: rgb(15 15 35);
+    color: white;
+    font-family: Inter, system-ui, sans-serif;
+    background-image: 
+      radial-gradient(circle at 20% 50%, rgba(139, 92, 246, 0.1) 0%, transparent 50%),
+      radial-gradient(circle at 80% 50%, rgba(6, 182, 212, 0.1) 0%, transparent 50%),
+      radial-gradient(circle at 40% 40%, rgba(236, 72, 153, 0.05) 0%, transparent 50%);
+    min-height: 100vh;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+@layer components {
+  /* 玻璃态效果 */
+  .glass {
+    background: rgba(139, 92, 246, 0.1);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(139, 92, 246, 0.2);
+  }
+  
+  .glass-card {
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(6, 182, 212, 0.05) 100%);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(139, 92, 246, 0.2);
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  }
+  
+  /* 霓虹发光效果 */
+  .glow-primary {
+    box-shadow: 0 0 20px rgba(139, 92, 246, 0.5);
+  }
+  
+  .glow-secondary {
+    box-shadow: 0 0 20px rgba(6, 182, 212, 0.5);
+  }
+  
+  .glow-accent {
+    box-shadow: 0 0 20px rgba(236, 72, 153, 0.5);
+  }
+  
+  /* 霓虹边框 */
+  .border-glow {
+    border: 1px solid;
+    border-image: linear-gradient(135deg, #8B5CF6, #06B6D4, #EC4899) 1;
+  }
+  
+  /* 按钮基础样式 */
+  .btn-cyber {
+    padding: 0.75rem 1.5rem;
+    border-radius: 0.5rem;
+    font-weight: 500;
+    transition: all 0.3s;
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.2) 0%, rgba(6, 182, 212, 0.2) 100%);
+    border: 1px solid rgba(139, 92, 246, 0.3);
+    color: white;
+  }
+  
+  .btn-cyber:hover {
+    box-shadow: 0 0 20px rgba(139, 92, 246, 0.5);
+    transform: translateY(-2px);
+  }
+  
+  .btn-cyber::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+    transition: left 0.5s;
+  }
+  
+  .btn-cyber:hover::before {
+    left: 100%;
+  }
+}
+
+@layer utilities {
+  /* 文字发光效果 */
+  .text-glow-primary {
+    color: #8B5CF6;
+    text-shadow: 0 0 10px rgba(139, 92, 246, 0.5);
+  }
+  
+  .text-glow-secondary {
+    color: #06B6D4;
+    text-shadow: 0 0 10px rgba(6, 182, 212, 0.5);
+  }
+  
+  .text-glow-accent {
+    color: #EC4899;
+    text-shadow: 0 0 10px rgba(236, 72, 153, 0.5);
+  }
+  
+  /* 滚动条样式 */
+  .scrollbar-cyber::-webkit-scrollbar {
+    width: 8px;
+  }
+  
+  .scrollbar-cyber::-webkit-scrollbar-track {
+    background: rgba(139, 92, 246, 0.1);
+    border-radius: 4px;
+  }
+  
+  .scrollbar-cyber::-webkit-scrollbar-thumb {
+    background: linear-gradient(135deg, #8B5CF6, #06B6D4);
+    border-radius: 4px;
+  }
+  
+  .scrollbar-cyber::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(135deg, #7C3AED, #0891B2);
+  }
+}

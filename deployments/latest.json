@@ -1,0 +1,13 @@
+{
+  "timestamp": "2025-07-18T10:00:00.000Z",
+  "network": "sepolia",
+  "chainId": 11155111,
+  "contracts": {
+    "GovToken": "0x5a08cfc2e2e4b61b0ad4bf9d8977f5fc4c74d0ad",
+    "RewardToken": "0x65d4bc4e05836e4421c985dc2947f1d68ccaea48",
+    "ParticipationNFT": "0x8a544f1e3954296d8ba6430e2c6cb505be85d836",
+    "Governance": "0x1a6e113cf3abd20650662f76bc163ac2d43a9347",
+    "Lottery": "0xdb7d60eca9dff432d8a8cc3087fe278e5bfd0d0c",
+    "StatusNFT": "0x86285162f7060796aebecd9c0809e28c0d15e2a5"
+  }
+} 
