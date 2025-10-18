@@ -21,11 +21,21 @@ contract Governance is Ownable {
         address [] voters;
     }
 
+    struct TaskConfig {
+        uint256 reward;
+        uint256 cooldown;
+        bool active;
+        bool repeatable;
+    }
+
     mapping(uint8 => Proposal) public proposals;
     uint8 public proposalCount;
     mapping(uint => address[]) public elgibleForLottery;
     mapping (address=>bool) isAdmin;
     mapping(address => uint256) public memberSince;
+
+    mapping(bytes32 => TaskConfig) public tasks;
+    mapping(address => mapping(bytes32 => uint256)) public lastTaskCompletion;
 
     GovToken public govToken;
     ParticipationNFT public participationNFT;
@@ -49,6 +59,8 @@ contract Governance is Ownable {
     event finalize(uint8 indexed proposalId, bool indexed result);
     event execute(uint8 indexed proposalId);
     event claimGOV(address indexed winner, uint8 indexed proposalId);
+    event TaskConfigured(bytes32 indexed taskId, uint256 reward, uint256 cooldown, bool active, bool repeatable);
+    event TaskCompleted(address indexed user, bytes32 indexed taskId, uint256 reward);
 
     modifier onlyAdmin(){
         require(isAdmin[msg.sender] == true,"Only admin can do this");
@@ -138,6 +150,54 @@ contract Governance is Ownable {
     function rewardVoter(address _voter, uint8 _amount) external {
         require(msg.sender == address(lottery), "Only lottery can reward voters");
         govToken.mint(_voter, _amount);
+    }
+
+    function setTask(bytes32 _taskId, uint256 _reward, uint256 _cooldown, bool _active, bool _repeatable) external onlyAdmin {
+        require(_taskId != bytes32(0), "Invalid task id");
+        if (_active) {
+            require(_reward > 0, "Reward must be set");
+        }
+
+        tasks[_taskId] = TaskConfig({
+            reward: _reward,
+            cooldown: _cooldown,
+            active: _active,
+            repeatable: _repeatable
+        });
+
+        emit TaskConfigured(_taskId, _reward, _cooldown, _active, _repeatable);
+    }
+
+    function completeTask(bytes32 _taskId) external {
+        TaskConfig memory task = tasks[_taskId];
+        require(task.active, "Task not active");
+        require(task.reward > 0, "Task reward not set");
+
+        uint256 lastCompleted = lastTaskCompletion[msg.sender][_taskId];
+
+        if (task.repeatable) {
+            if (task.cooldown > 0) {
+                require(block.timestamp >= lastCompleted + task.cooldown, "Task cooldown not finished");
+            } else {
+                require(block.timestamp > lastCompleted, "Task already completed");
+            }
+        } else {
+            require(lastCompleted == 0, "Task already completed");
+        }
+
+        lastTaskCompletion[msg.sender][_taskId] = block.timestamp;
+        govToken.mint(msg.sender, task.reward);
+
+        emit TaskCompleted(msg.sender, _taskId, task.reward);
+    }
+
+    function getTask(bytes32 _taskId) external view returns (uint256 reward, uint256 cooldown, bool active, bool repeatable) {
+        TaskConfig memory task = tasks[_taskId];
+        return (task.reward, task.cooldown, task.active, task.repeatable);
+    }
+
+    function getTaskLastCompletion(address _user, bytes32 _taskId) external view returns (uint256) {
+        return lastTaskCompletion[_user][_taskId];
     }
 
     // 设置Lottery合约地址
