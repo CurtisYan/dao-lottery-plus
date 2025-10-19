@@ -5,27 +5,46 @@ import { Button } from '@/components/ui/Button'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Progress } from '@/components/ui/Progress'
-import { 
-  Vote, 
-  Plus, 
-  Clock, 
-  CheckCircle, 
+import {
+  Vote,
+  Plus,
+  Clock,
+  CheckCircle,
   XCircle,
   Users,
   Coins,
   TrendingUp,
-  Calendar,
   User,
   Filter,
-  Search,
-  Loader2
+  Loader2,
+  ShieldAlert,
+  Hammer,
 } from 'lucide-react'
 import { useAccount } from 'wagmi'
-import { useProposalCount, useProposal, useVote, useCreateProposal } from '@/hooks/useGovernance'
+import {
+  useProposalCount,
+  useProposal,
+  useVote,
+  useCreateProposal,
+  useRemovalVote,
+  useInitiateRemovalVote,
+  useVoteOnRemoval,
+  useFinalizeRemovalVote,
+  useRemovalEligibility,
+  useHasRemovalVoted,
+} from '@/hooks/useGovernance'
 import { useGovTokenBalance } from '@/hooks/useTokenBalance'
 import { toast } from 'sonner'
 import { Input } from '@/components/ui/Input'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/Dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from '@/components/ui/Dialog'
+import { formatUnits } from 'viem'
 
 // 统计数据 - 这部分后续会改为真实数据
 const stats = [
@@ -35,12 +54,34 @@ const stats = [
   { label: '参与率', value: '0%', icon: TrendingUp, color: 'success' }
 ]
 
-const ProposalCard = ({ proposalId }: { proposalId: number }) => {
+const ProposalCard = ({
+  proposalId,
+  removalEligibility,
+}: {
+  proposalId: number
+  removalEligibility: {
+    eligible: boolean
+    qualifiesHighTier: boolean
+    qualifiesLowTier: boolean
+    balance: bigint
+  }
+}) => {
   const { proposal, isLoading, error, refetch } = useProposal(proposalId)
+  const { removal, refetch: refetchRemoval } = useRemovalVote(proposalId)
   const { vote, isPending } = useVote()
+  const { initiateRemovalVote, isPending: isInitiatingRemoval } = useInitiateRemovalVote()
+  const { voteRemoval, isPending: isVotingRemoval } = useVoteOnRemoval()
+  const { finalizeRemovalVote, isPending: isFinalizingRemoval } = useFinalizeRemovalVote()
+  const { hasVoted: hasRemovalVoted, refetch: refetchRemovalVoteStatus } = useHasRemovalVoted(proposalId)
   const { address } = useAccount()
+
   const [votingFor, setVotingFor] = useState(false)
   const [votingAgainst, setVotingAgainst] = useState(false)
+  const [isRemovalDialogOpen, setRemovalDialogOpen] = useState(false)
+  const [removalReason, setRemovalReason] = useState('')
+  const [removalDurationHours, setRemovalDurationHours] = useState(24)
+  const [removalVotingFor, setRemovalVotingFor] = useState(false)
+  const [removalVotingAgainst, setRemovalVotingAgainst] = useState(false)
 
   if (isLoading) {
     return (
@@ -68,33 +109,77 @@ const ProposalCard = ({ proposalId }: { proposalId: number }) => {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'active': return 'warning'
-      case 'passed': return 'success'
-      case 'rejected': return 'danger'
-      default: return 'secondary'
+      case 'active':
+        return 'warning'
+      case 'passed':
+        return 'success'
+      case 'rejected':
+        return 'danger'
+      case 'awaiting-finalization':
+        return 'secondary'
+      case 'removed':
+        return 'danger'
+      default:
+        return 'secondary'
     }
   }
 
   const getStatusText = (status: string) => {
     switch (status) {
-      case 'active': return '投票中'
-      case 'passed': return '已通过'
-      case 'rejected': return '未通过'
-      default: return '未知'
+      case 'active':
+        return '投票中'
+      case 'passed':
+        return '已通过'
+      case 'rejected':
+        return '未通过'
+      case 'awaiting-finalization':
+        return '待结算'
+      case 'removed':
+        return '已删除'
+      default:
+        return '未知'
     }
   }
 
-  const votePercentage = proposal.totalVotes > 0 
-    ? (proposal.forVotes / proposal.totalVotes) * 100 
-    : 0
-
+  const votePercentage = proposal.totalVotes > 0 ? (proposal.forVotes / proposal.totalVotes) * 100 : 0
   const isActive = proposal.status === 'active'
+  const isRemoved = proposal.removed
   const timeLeft = isActive ? proposal.endTime - Date.now() : 0
   const daysLeft = Math.max(0, Math.ceil(timeLeft / (1000 * 60 * 60 * 24)))
+
+  const removalActive = removal ? !removal.executed && Date.now() < removal.endTime : false
+  const removalEnded = removal ? !removal.executed && Date.now() >= removal.endTime : false
+  const removalExecuted = removal ? removal.executed : false
+  const canVoteOnRemoval = removalActive && removalEligibility.eligible && !hasRemovalVoted
+  const canFinalizeRemoval = removalEnded
+  const canInitiateRemoval = removalEligibility.eligible && !removal && !isRemoved
+
+  const removalRequirementHint = (() => {
+    if (!address) {
+      return '连接钱包以检查删除投票资格'
+    }
+    if (removalEligibility.eligible) {
+      if (removalEligibility.qualifiesHighTier) {
+        return '已持有高等级身份 NFT（钻石/王者），仅需 ≥200 GOV 即可参与'
+      }
+      if (removalEligibility.qualifiesLowTier) {
+        return '已持有基础身份 NFT（白银/黄金），需要 ≥500 GOV 即可参与'
+      }
+      return '满足删除投票资格'
+    }
+    if (removalEligibility.qualifiesHighTier || removalEligibility.qualifiesLowTier) {
+      return '需要更多 GOV 余额才能参与删除投票'
+    }
+    return '需要先领取身份 NFT 才能参与删除投票'
+  })()
 
   const handleVote = async (support: boolean) => {
     if (!address) {
       toast.error('请先连接钱包')
+      return
+    }
+    if (isRemoved) {
+      toast.error('该提案已被删除')
       return
     }
 
@@ -117,132 +202,381 @@ const ProposalCard = ({ proposalId }: { proposalId: number }) => {
     }
   }
 
+  const handleOpenRemovalDialog = () => {
+    if (!address) {
+      toast.error('请先连接钱包')
+      return
+    }
+    if (!removalEligibility.eligible) {
+      toast.error(removalRequirementHint)
+      return
+    }
+    setRemovalDialogOpen(true)
+  }
+
+  const handleInitiateRemoval = async () => {
+    if (!removalEligibility.eligible) {
+      toast.error(removalRequirementHint)
+      return
+    }
+    try {
+      const durationSeconds = Math.max(1, Number(removalDurationHours)) * 3600
+      await initiateRemovalVote(proposal.id, removalReason, durationSeconds)
+      toast.success('删除投票已发起')
+      setRemovalDialogOpen(false)
+      setRemovalReason('')
+      refetchRemoval()
+    } catch (error) {
+      console.error('发起删除投票失败:', error)
+      toast.error((error as Error).message)
+    }
+  }
+
+  const handleRemovalVote = async (support: boolean) => {
+    if (!address) {
+      toast.error('请先连接钱包')
+      return
+    }
+    if (!canVoteOnRemoval) {
+      toast.error(removalRequirementHint)
+      return
+    }
+    try {
+      if (support) {
+        setRemovalVotingFor(true)
+      } else {
+        setRemovalVotingAgainst(true)
+      }
+      await voteRemoval(proposal.id, support)
+      toast.success(`删除投票${support ? '支持' : '反对'}成功`)
+      refetchRemoval()
+      refetchRemovalVoteStatus()
+    } catch (error) {
+      console.error('删除投票失败:', error)
+      toast.error((error as Error).message)
+    } finally {
+      setRemovalVotingFor(false)
+      setRemovalVotingAgainst(false)
+    }
+  }
+
+  const handleFinalizeRemoval = async () => {
+    try {
+      await finalizeRemovalVote(proposal.id)
+      toast.success('删除投票已结算')
+      refetchRemoval()
+      refetch()
+    } catch (error) {
+      console.error('结算删除投票失败:', error)
+      toast.error((error as Error).message)
+    }
+  }
+
+  const formattedGovBalance = parseFloat(formatUnits(removalEligibility.balance, 18)).toFixed(2)
+
   return (
-    <Card variant="glass" hover className="group">
-      <CardHeader>
-        <div className="flex justify-between items-start mb-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-gradient-to-r from-primary/20 to-secondary/20 flex items-center justify-center">
-              <Vote className="w-5 h-5 text-primary" />
+    <>
+      <Card variant="glass" hover className="group">
+        <CardHeader>
+          <div className="flex justify-between items-start mb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-gradient-to-r from-primary/20 to-secondary/20 flex items-center justify-center">
+                <Vote className="w-5 h-5 text-primary" />
+              </div>
+              <div className="flex flex-col gap-2">
+                <div>
+                  <Badge variant={getStatusColor(proposal.status)}>
+                    {getStatusText(proposal.status)}
+                  </Badge>
+                  {isActive && (
+                    <Badge variant="ghost" className="ml-2">
+                      <Clock className="w-3 h-3 mr-1" />
+                      {daysLeft}天后结束
+                    </Badge>
+                  )}
+                </div>
+                {removal && !proposal.removed && (
+                  <Badge variant="danger" className="w-max">
+                    <ShieldAlert className="w-3 h-3 mr-1" />恶意删除投票中
+                  </Badge>
+                )}
+              </div>
             </div>
+            <div className="text-right text-sm text-gray-400">
+              <div>提案 #{proposal.id}</div>
+              <div>截止: {new Date(proposal.endTime).toLocaleString()}</div>
+            </div>
+          </div>
+
+          <CardTitle className="text-xl mb-2">
+            {proposal.description.split('\n')[0]}
+          </CardTitle>
+          <p className="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap">
+            {proposal.description.split('\n').slice(1).join('\n') || '—'}
+          </p>
+
+          <div className="flex items-center gap-2 mt-3">
+            <User className="w-4 h-4 text-gray-400" />
+            <span className="text-sm text-gray-400">提案人: {proposal.proposer.slice(0, 6)}...{proposal.proposer.slice(-4)}</span>
+          </div>
+        </CardHeader>
+
+        <CardContent>
+          <div className="space-y-4">
             <div>
-              <Badge variant={getStatusColor(proposal.status)}>
-                {getStatusText(proposal.status)}
-              </Badge>
-              {isActive && (
-                <Badge variant="ghost" className="ml-2">
-                  <Clock className="w-3 h-3 mr-1" />
-                  {daysLeft}天后结束
-                </Badge>
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-sm text-gray-300">支持票</span>
+                <span className="text-sm font-medium text-green-400">
+                  {proposal.forVotes.toLocaleString()} ({votePercentage.toFixed(1)}%)
+                </span>
+              </div>
+              <Progress
+                value={proposal.forVotes}
+                max={proposal.totalVotes > 0 ? proposal.totalVotes : 1}
+                variant="success"
+                glow
+                size="sm"
+              />
+            </div>
+
+            <div>
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-sm text-gray-300">反对票</span>
+                <span className="text-sm font-medium text-red-400">
+                  {proposal.againstVotes.toLocaleString()} ({proposal.totalVotes > 0 ? (100 - votePercentage).toFixed(1) : '0.0'}%)
+                </span>
+              </div>
+              <Progress
+                value={proposal.againstVotes}
+                max={proposal.totalVotes > 0 ? proposal.totalVotes : 1}
+                variant="danger"
+                glow
+                size="sm"
+              />
+            </div>
+
+            <div className="pt-4 border-t border-white/10">
+              <div className="flex justify-between items-center text-sm text-gray-400 mb-4">
+                <span>总投票数: {proposal.totalVotes.toLocaleString()}</span>
+                <span>参与率: {((proposal.totalVotes / 5000) * 100).toFixed(1)}%</span>
+              </div>
+
+              {isActive && !isRemoved ? (
+                <div className="flex gap-3">
+                  <Button
+                    variant={votingFor ? 'secondary' : 'primary'}
+                    size="sm"
+                    className="flex-1"
+                    onClick={() => handleVote(true)}
+                    disabled={isPending || votingFor || votingAgainst}
+                  >
+                    {votingFor ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <CheckCircle className="w-4 h-4 mr-2" />
+                    )}
+                    支持
+                  </Button>
+                  <Button
+                    variant={votingAgainst ? 'primary' : 'secondary'}
+                    size="sm"
+                    className="flex-1"
+                    onClick={() => handleVote(false)}
+                    disabled={isPending || votingFor || votingAgainst}
+                  >
+                    {votingAgainst ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <XCircle className="w-4 h-4 mr-2" />
+                    )}
+                    反对
+                  </Button>
+                </div>
+              ) : (
+                <Button variant="ghost" size="sm" className="w-full" disabled>
+                  {isRemoved ? '提案已删除' : '投票已结束'}
+                </Button>
               )}
             </div>
-          </div>
-          <div className="text-right text-sm text-gray-400">
-            <div>提案 #{proposal.id}</div>
-            <div>{new Date(proposal.startTime).toLocaleDateString()}</div>
-          </div>
-        </div>
 
-        <CardTitle className="text-xl mb-2">
-          {proposal.description.split('\n')[0]}
-        </CardTitle>
-        <p className="text-gray-300 text-sm leading-relaxed">
-          {proposal.description.split('\n').slice(1).join('\n')}
-        </p>
-
-        <div className="flex items-center gap-2 mt-3">
-          <User className="w-4 h-4 text-gray-400" />
-          <span className="text-sm text-gray-400">提案人: {proposal.proposer.slice(0, 6)}...{proposal.proposer.slice(-4)}</span>
-        </div>
-      </CardHeader>
-
-      <CardContent>
-        {/* 投票进度 */}
-        <div className="space-y-4">
-          <div>
-            <div className="flex justify-between items-center mb-2">
-              <span className="text-sm text-gray-300">支持票</span>
-              <span className="text-sm font-medium text-green-400">
-                {proposal.forVotes.toLocaleString()} ({votePercentage.toFixed(1)}%)
-              </span>
-            </div>
-            <Progress 
-              value={proposal.forVotes} 
-              max={proposal.totalVotes}
-              variant="success"
-              glow
-              size="sm"
-            />
-          </div>
-
-          <div>
-            <div className="flex justify-between items-center mb-2">
-              <span className="text-sm text-gray-300">反对票</span>
-              <span className="text-sm font-medium text-red-400">
-                {proposal.againstVotes.toLocaleString()} ({(100 - votePercentage).toFixed(1)}%)
-              </span>
-            </div>
-            <Progress 
-              value={proposal.againstVotes} 
-              max={proposal.totalVotes}
-              variant="danger"
-              glow
-              size="sm"
-            />
-          </div>
-
-          <div className="pt-4 border-t border-white/10">
-            <div className="flex justify-between items-center text-sm text-gray-400 mb-4">
-              <span>总投票数: {proposal.totalVotes.toLocaleString()}</span>
-              <span>参与率: {((proposal.totalVotes / 5000) * 100).toFixed(1)}%</span>
-            </div>
-
-            {isActive ? (
-              <div className="flex gap-3">
-                <Button 
-                  variant={votingFor ? "secondary" : "primary"} 
-                  size="sm" 
-                  className="flex-1"
-                  onClick={() => handleVote(true)}
-                  disabled={isPending || votingFor || votingAgainst}
-                >
-                  {votingFor ? (
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  ) : (
-                    <CheckCircle className="w-4 h-4 mr-2" />
-                  )}
-                  支持
-                </Button>
-                <Button 
-                  variant={votingAgainst ? "primary" : "secondary"} 
-                  size="sm" 
-                  className="flex-1"
-                  onClick={() => handleVote(false)}
-                  disabled={isPending || votingFor || votingAgainst}
-                >
-                  {votingAgainst ? (
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  ) : (
-                    <XCircle className="w-4 h-4 mr-2" />
-                  )}
-                  反对
-                </Button>
+            {isRemoved && (
+              <div className="mt-6 flex items-start gap-3 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-red-200">
+                <ShieldAlert className="w-5 h-5 mt-1" />
+                <div>
+                  <div className="font-semibold">恶意提案已被删除</div>
+                  <p className="text-sm mt-1">
+                    删除投票通过，提案创建者的 50% GOV 已被没收，防止恶意提案危害 DAO。
+                  </p>
+                </div>
               </div>
-            ) : (
-              <Button variant="ghost" size="sm" className="w-full" disabled>
-                投票已结束
-              </Button>
+            )}
+
+            {!isRemoved && (
+              <div className="mt-6 space-y-4">
+                {removal ? (
+                  <div className="rounded-lg border border-primary/20 bg-primary/5 p-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2 text-primary-foreground">
+                        <ShieldAlert className="w-4 h-4" />
+                        <span className="text-sm font-semibold text-primary">恶意提案删除投票</span>
+                      </div>
+                      <span className="text-xs text-gray-400">
+                        截止: {new Date(removal.endTime).toLocaleString()}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm text-gray-200 whitespace-pre-wrap">{removal.reason}</p>
+                    <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                      <div className="rounded-md bg-green-500/10 px-3 py-2 text-green-200">
+                        <div className="text-xs uppercase tracking-wide text-green-300/80">支持删除</div>
+                        <div className="text-lg font-semibold">{removal.yesVotes}</div>
+                      </div>
+                      <div className="rounded-md bg-red-500/10 px-3 py-2 text-red-200">
+                        <div className="text-xs uppercase tracking-wide text-red-300/80">反对删除</div>
+                        <div className="text-lg font-semibold">{removal.noVotes}</div>
+                      </div>
+                    </div>
+
+                    {removalActive && (
+                      <div className="mt-4 flex gap-3">
+                        <Button
+                          variant={removalVotingFor ? 'secondary' : 'destructive'}
+                          size="sm"
+                          className="flex-1"
+                          onClick={() => handleRemovalVote(true)}
+                          disabled={isVotingRemoval || removalVotingFor || removalVotingAgainst || !canVoteOnRemoval}
+                        >
+                          {removalVotingFor ? (
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          ) : (
+                            <CheckCircle className="w-4 h-4 mr-2" />
+                          )}
+                          支持删除
+                        </Button>
+                        <Button
+                          variant={removalVotingAgainst ? 'primary' : 'secondary'}
+                          size="sm"
+                          className="flex-1"
+                          onClick={() => handleRemovalVote(false)}
+                          disabled={isVotingRemoval || removalVotingFor || removalVotingAgainst || !canVoteOnRemoval}
+                        >
+                          {removalVotingAgainst ? (
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          ) : (
+                            <XCircle className="w-4 h-4 mr-2" />
+                          )}
+                          反对删除
+                        </Button>
+                      </div>
+                    )}
+
+                    {canVoteOnRemoval ? (
+                      <p className="mt-2 text-xs text-gray-300">
+                        你的 GOV 余额约为 {formattedGovBalance}，符合当前删除投票参与门槛。
+                      </p>
+                    ) : (
+                      <p className="mt-2 text-xs text-gray-400">{removalRequirementHint}</p>
+                    )}
+
+                    {canFinalizeRemoval && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className="mt-4 w-full"
+                        onClick={handleFinalizeRemoval}
+                        disabled={isFinalizingRemoval}
+                      >
+                        {isFinalizingRemoval ? (
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        ) : (
+                          <Hammer className="w-4 h-4 mr-2" />
+                        )}
+                        结算删除投票
+                      </Button>
+                    )}
+
+                    {removalExecuted && (
+                      <div className={`mt-4 rounded-md px-3 py-2 text-sm ${proposal.removed ? 'bg-red-500/10 text-red-200' : 'bg-green-500/10 text-green-200'}`}>
+                        {proposal.removed ? '删除投票已通过，提案已被移除。' : '删除投票未通过，提案继续保留。'}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+                    <div className="flex items-center gap-2 text-white">
+                      <ShieldAlert className="w-4 h-4" />
+                      <span className="text-sm font-semibold">尚未发起恶意删除投票</span>
+                    </div>
+                    <p className="mt-2 text-sm text-gray-300">{removalRequirementHint}</p>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="mt-4"
+                      onClick={handleOpenRemovalDialog}
+                      disabled={isInitiatingRemoval}
+                    >
+                      发起删除投票
+                    </Button>
+                  </div>
+                )}
+              </div>
             )}
           </div>
-        </div>
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+
+      <Dialog open={isRemovalDialogOpen} onOpenChange={setRemovalDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>发起恶意提案删除投票</DialogTitle>
+            <DialogDescription>
+              删除投票将立即通知所有成员参与二次表决，若通过将删除该提案并没收提案人 50% GOV。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-gray-200">删除理由</label>
+              <textarea
+                className="w-full rounded-md border border-white/10 bg-black/40 px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary"
+                rows={4}
+                value={removalReason}
+                onChange={(event) => setRemovalReason(event.target.value)}
+                placeholder="说明此提案为何被视为恶意或对社区有害"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-gray-200">投票持续时间（小时）</label>
+              <Input
+                type="number"
+                min={1}
+                value={removalDurationHours}
+                onChange={(event) => setRemovalDurationHours(Number(event.target.value))}
+              />
+              <p className="text-xs text-gray-400">最少 1 小时。建议 24 小时以上给予社区充分决策时间。</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setRemovalDialogOpen(false)}>
+              取消
+            </Button>
+            <Button
+              variant="primary"
+              onClick={handleInitiateRemoval}
+              disabled={isInitiatingRemoval || !removalReason.trim()}
+            >
+              {isInitiatingRemoval ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+              确认发起
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
 
 export default function GovernancePage() {
   const { count, isLoading: isCountLoading } = useProposalCount()
   const { balance } = useGovTokenBalance()
+  const { eligibility: removalEligibility } = useRemovalEligibility()
   const [proposalIds, setProposalIds] = useState<number[]>([])
   
   // 添加创建提案相关的状态和钩子
@@ -371,7 +705,7 @@ export default function GovernancePage() {
         ) : proposalIds.length > 0 ? (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {proposalIds.map((id) => (
-              <ProposalCard key={id} proposalId={id} />
+              <ProposalCard key={id} proposalId={id} removalEligibility={removalEligibility} />
             ))}
           </div>
         ) : (

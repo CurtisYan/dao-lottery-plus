@@ -155,6 +155,11 @@ async function main() {
   await publicClient.waitForTransactionReceipt({ hash: tx4 });
   console.log("✅ Lottery contract address set in Governance.");
 
+  console.log("Linking StatusNFT to Governance for removal voting...");
+  const tx4b = await governance.write.setStatusNFT([statusNFT.address]);
+  await publicClient.waitForTransactionReceipt({ hash: tx4b });
+  console.log("✅ StatusNFT contract address set in Governance.");
+
   // 5. StatusNFT按顺序设置baseURI
   console.log("Setting token URIs for StatusNFT tiers...");
   const statusTiers = [

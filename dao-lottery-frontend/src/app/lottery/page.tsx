@@ -162,35 +162,21 @@ const HistoryCard: React.FC<{
 
 // 带余额的参与者组件
 const ParticipantWithBalance: React.FC<{
-  address: string, 
+  address: string,
   index: number,
   participantCount: number,
-  participants: readonly `0x${string}`[] // 修复类型错误
-}> = ({ 
-  address, 
+}> = ({
+  address,
   index,
   participantCount,
-  participants
 }) => {
   // 从链上获取GOV余额
   const { balance, isLoading } = useGovBalance(address as `0x${string}`);
-  
+
   // 计算概率 - 使用更合理的方法
   const calculateProbability = () => {
-    // 如果只有一个参与者，概率为100%
-    if (participantCount === 1) return 100;
-    
-    // 如果有多个参与者，平均分配概率
-    const basePercentage = 100 / participantCount;
-    
-    // 根据GOV余额调整概率（余额越高，概率越高）
-    if (balance > 0) {
-      // 简单的概率调整：余额越高，概率越高，但不超过基础概率的2倍
-      const balanceMultiplier = Math.min(Number(balance) / 100, 2); // 最多2倍
-      return Math.min(basePercentage * balanceMultiplier, 100);
-    }
-    
-    return basePercentage;
+    if (participantCount <= 0) return 0;
+    return 100 / participantCount;
   };
 
   const probability = calculateProbability();
@@ -510,12 +496,11 @@ export default function LotteryPage() {
                 ) : (
                   <div className="space-y-3">
                     {participants.map((participant, index) => (
-                      <ParticipantWithBalance 
-                        key={participant} 
+                      <ParticipantWithBalance
+                        key={participant}
                         address={participant}
                         index={index}
                         participantCount={participantCount}
-                        participants={participants} // 传递所有参与者列表
                       />
                     ))}
                   </div>
