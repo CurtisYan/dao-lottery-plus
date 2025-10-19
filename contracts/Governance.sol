@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "./GovToken.sol";
 import "./ParticipationNFT.sol";
 import "./Lottery.sol";
+import "./StatusNFT.sol";
 
 contract Governance is Ownable {
 
@@ -15,6 +16,7 @@ contract Governance is Ownable {
         uint noVote;
         bool pass;
         bool finalized;
+        bool removed;
         uint deadline;
         mapping(address => bool) hasVoted;
         mapping(address => bool) voteChoice;
@@ -40,6 +42,24 @@ contract Governance is Ownable {
     GovToken public govToken;
     ParticipationNFT public participationNFT;
     Lottery public lottery;
+    StatusNFT public statusNFT;
+
+    struct RemovalVote {
+        string reason;
+        address initiator;
+        uint256 deadline;
+        uint256 yesVotes;
+        uint256 noVotes;
+        bool executed;
+        bool exists;
+        mapping(address => bool) hasVoted;
+    }
+
+    mapping(uint8 => RemovalVote) private removalVotes;
+
+    uint256 public constant HIGH_TIER_MIN_GOV = 200 * 1e18;
+    uint256 public constant LOW_TIER_MIN_GOV = 500 * 1e18;
+    uint256 public constant MIN_REMOVAL_VOTE_DURATION = 1 hours;
 
     uint public FEE;
     uint public THRESHOLD;
@@ -61,6 +81,9 @@ contract Governance is Ownable {
     event claimGOV(address indexed winner, uint8 indexed proposalId);
     event TaskConfigured(bytes32 indexed taskId, uint256 reward, uint256 cooldown, bool active, bool repeatable);
     event TaskCompleted(address indexed user, bytes32 indexed taskId, uint256 reward);
+    event RemovalVoteInitiated(uint8 indexed proposalId, address indexed initiator, uint256 deadline, string reason);
+    event RemovalVoteCast(uint8 indexed proposalId, address indexed voter, bool indexed support);
+    event RemovalVoteFinalized(uint8 indexed proposalId, bool removed, uint256 yesVotes, uint256 noVotes, uint256 slashedAmount);
 
     modifier onlyAdmin(){
         require(isAdmin[msg.sender] == true,"Only admin can do this");
@@ -95,8 +118,9 @@ contract Governance is Ownable {
         Proposal storage proposal = proposals[_proposalId];
 
         require(proposal.deadline > block.timestamp, "Voting period has ended");
-        require(!proposal.hasVoted[msg.sender], "You have already voted");   
+        require(!proposal.hasVoted[msg.sender], "You have already voted");
         require(!proposal.finalized, "Proposal has been finalized");
+        require(!proposal.removed, "Proposal removed");
         require(govToken.balanceOf(msg.sender) > 1, "Not enough GOV tokens");
         
         govToken.burnFrom(msg.sender, 1);
@@ -124,6 +148,7 @@ contract Governance is Ownable {
         require(_proposalId <= proposalCount, "Invalid proposal ID");
         require(proposal.deadline < block.timestamp, "Voting period has not ended");
         require(!proposal.finalized, "Proposal has already been finalized");
+        require(!proposal.removed, "Proposal removed");
         proposal.pass = proposal.yesVotes > proposal.noVote;
         
         uint correctVotes = 0;
@@ -191,6 +216,83 @@ contract Governance is Ownable {
         emit TaskCompleted(msg.sender, _taskId, task.reward);
     }
 
+    function initiateRemovalVote(uint8 _proposalId, string calldata _reason, uint256 _duration) external {
+        require(_proposalId > 0 && _proposalId <= proposalCount, "Invalid proposal ID");
+        require(bytes(_reason).length > 0, "Removal reason required");
+        require(_duration >= MIN_REMOVAL_VOTE_DURATION, "Duration too short");
+        require(address(statusNFT) != address(0), "Status NFT not set");
+
+        Proposal storage proposal = proposals[_proposalId];
+        require(!proposal.removed, "Proposal already removed");
+
+        RemovalVote storage removal = removalVotes[_proposalId];
+        require(!removal.exists, "Removal vote already active");
+
+        (bool eligible,,,) = _removalEligibility(msg.sender);
+        require(eligible, "Not eligible for removal vote");
+
+        removal.reason = _reason;
+        removal.initiator = msg.sender;
+        removal.deadline = block.timestamp + _duration;
+        removal.yesVotes = 0;
+        removal.noVotes = 0;
+        removal.executed = false;
+        removal.exists = true;
+
+        emit RemovalVoteInitiated(_proposalId, msg.sender, removal.deadline, _reason);
+    }
+
+    function voteOnRemoval(uint8 _proposalId, bool _support) external {
+        RemovalVote storage removal = removalVotes[_proposalId];
+        require(removal.exists, "Removal vote not active");
+        require(!removal.executed, "Removal vote finalized");
+        require(block.timestamp < removal.deadline, "Voting period ended");
+
+        (bool eligible,,,) = _removalEligibility(msg.sender);
+        require(eligible, "Not eligible for removal vote");
+        require(!removal.hasVoted[msg.sender], "Already voted");
+
+        removal.hasVoted[msg.sender] = true;
+        if (_support) {
+            removal.yesVotes += 1;
+        } else {
+            removal.noVotes += 1;
+        }
+
+        emit RemovalVoteCast(_proposalId, msg.sender, _support);
+    }
+
+    function finalizeRemovalVote(uint8 _proposalId) external {
+        RemovalVote storage removal = removalVotes[_proposalId];
+        require(removal.exists, "Removal vote not active");
+        require(!removal.executed, "Removal vote finalized");
+        require(block.timestamp >= removal.deadline, "Voting period ongoing");
+
+        removal.executed = true;
+
+        Proposal storage proposal = proposals[_proposalId];
+        uint256 slashedAmount = 0;
+        bool removed = false;
+
+        if (removal.yesVotes > removal.noVotes && !proposal.removed) {
+            proposal.removed = true;
+            proposal.finalized = true;
+            proposal.pass = false;
+            removed = true;
+
+            address proposer = proposal.proposer;
+            if (proposer != address(0)) {
+                uint256 balance = govToken.balanceOf(proposer);
+                slashedAmount = balance / 2;
+                if (slashedAmount > 0) {
+                    govToken.slash(proposer, slashedAmount);
+                }
+            }
+        }
+
+        emit RemovalVoteFinalized(_proposalId, removed, removal.yesVotes, removal.noVotes, slashedAmount);
+    }
+
     function getTask(bytes32 _taskId) external view returns (uint256 reward, uint256 cooldown, bool active, bool repeatable) {
         TaskConfig memory task = tasks[_taskId];
         return (task.reward, task.cooldown, task.active, task.repeatable);
@@ -205,6 +307,10 @@ contract Governance is Ownable {
         lottery = Lottery(_lottery);
     }
 
+    function setStatusNFT(address _statusNFT) external onlyOwner {
+        statusNFT = StatusNFT(_statusNFT);
+    }
+
     // getter and setter
     function setAdmin(address _addr,bool _isAdmin)public onlyOwner(){
         isAdmin[_addr] = _isAdmin;
@@ -216,6 +322,71 @@ contract Governance is Ownable {
     function setTHRESHOLD(uint _threshold)public onlyAdmin{
         THRESHOLD = _threshold;
     }
+
+    function getRemovalVote(uint8 _proposalId) external view returns (
+        bool exists,
+        string memory reason,
+        address initiator,
+        uint256 deadline,
+        uint256 yesVotes,
+        uint256 noVotes,
+        bool executed
+    ) {
+        RemovalVote storage removal = removalVotes[_proposalId];
+        if (!removal.exists) {
+            return (false, "", address(0), 0, 0, 0, false);
+        }
+
+        return (
+            true,
+            removal.reason,
+            removal.initiator,
+            removal.deadline,
+            removal.yesVotes,
+            removal.noVotes,
+            removal.executed
+        );
+    }
+
+    function hasRemovalVoted(uint8 _proposalId, address _user) external view returns (bool) {
+        return removalVotes[_proposalId].hasVoted[_user];
+    }
+
+    function getRemovalEligibility(address account) external view returns (
+        bool eligible,
+        bool qualifiesHighTier,
+        bool qualifiesLowTier,
+        uint256 balance
+    ) {
+        return _removalEligibility(account);
+    }
+
+    function _removalEligibility(address account) internal view returns (
+        bool eligible,
+        bool qualifiesHighTier,
+        bool qualifiesLowTier,
+        uint256 balance
+    ) {
+        balance = govToken.balanceOf(account);
+
+        if (address(statusNFT) == address(0)) {
+            return (false, false, false, balance);
+        }
+
+        uint256 diamondTierId = statusNFT.DIAMOND_TIER_ID();
+        uint256 kingTierId = statusNFT.KING_TIER_ID();
+        uint256 goldTierId = statusNFT.GOLD_TIER_ID();
+        uint256 silverTierId = statusNFT.SILVER_TIER_ID();
+
+        qualifiesHighTier = statusNFT.balanceOf(account, diamondTierId) > 0 || statusNFT.balanceOf(account, kingTierId) > 0;
+        qualifiesLowTier = statusNFT.balanceOf(account, goldTierId) > 0 || statusNFT.balanceOf(account, silverTierId) > 0;
+
+        if (qualifiesHighTier && balance >= HIGH_TIER_MIN_GOV) {
+            eligible = true;
+        } else if (qualifiesLowTier && balance >= LOW_TIER_MIN_GOV) {
+            eligible = true;
+        }
+    }
     function getProposal(uint8 _proposalId) external view returns(
         string memory description,
         address proposer,
@@ -223,7 +394,8 @@ contract Governance is Ownable {
         uint noVote,
         bool pass,
         bool finalized,
-        uint deadline
+        uint deadline,
+        bool removed
     ){
         require( _proposalId <= proposalCount, "Invalid proposal ID");
         Proposal storage proposal = proposals[_proposalId];
@@ -234,7 +406,8 @@ contract Governance is Ownable {
             proposal.noVote,
             proposal.pass,
             proposal.finalized,
-            proposal.deadline
+            proposal.deadline,
+            proposal.removed
         );
     }
     function hasUserVoted(uint8 _proposalId, address _user) external view returns (bool) {

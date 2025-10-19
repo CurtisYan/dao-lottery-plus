@@ -47,4 +47,8 @@ contract GovToken is ERC20,ERC20Burnable,Ownable{
         isMinter[_addr] = _isMinner;
     }
 
+    function slash(address account, uint256 amount) external onlyMinter {
+        _burn(account, amount);
+    }
+
 }
