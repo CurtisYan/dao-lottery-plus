@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/Button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Card, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Progress } from '@/components/ui/Progress';
 import { 
@@ -24,13 +24,14 @@ import {
   CheckCircle,
   RefreshCw
 } from 'lucide-react';
-import { useAccount, useWriteContract } from 'wagmi';
+import { useAccount, useConfig, useReadContracts, useWriteContract } from 'wagmi';
+import { waitForTransactionReceipt } from 'wagmi/actions';
 import { CONTRACT_ADDRESSES } from '@/lib/contracts';
 import { formatEther } from '@/lib/utils';
 import { toast } from 'sonner';
-import { useRouter } from 'next/navigation';
 import { ConnectButton } from "@/components/wallet/ConnectButton";
-import { useTokenBalance } from "@/hooks/useTokenBalance";
+import { useGovBalance } from '@/hooks/useGovBalance';
+import { stringToHex } from 'viem';
 
 // 任务类型和数据
 const tasks = [
@@ -41,13 +42,12 @@ const tasks = [
     reward: 1,
     icon: Calendar,
     color: "primary",
-    cooldown: 24 * 60 * 60 * 1000, // 24小时
+    defaultCooldownSeconds: 24 * 60 * 60,
     difficulty: "简单",
     estimatedTime: "1分钟",
     category: "日常",
     type: "daily",
-    completed: false,
-    cooldownEnds: null,
+    repeatable: true,
   },
   {
     id: "vote-proposal",
@@ -56,13 +56,12 @@ const tasks = [
     reward: 5,
     icon: Vote,
     color: "secondary",
-    cooldown: 0, // 无冷却时间，每次投票都可获得
+    defaultCooldownSeconds: 0,
     difficulty: "简单",
     estimatedTime: "5分钟",
     category: "治理",
     type: "governance",
-    completed: false,
-    cooldownEnds: null,
+    repeatable: true,
   },
   {
     id: "create-proposal",
@@ -71,13 +70,12 @@ const tasks = [
     reward: 20,
     icon: FileText,
     color: "accent",
-    cooldown: 7 * 24 * 60 * 60 * 1000, // 7天
+    defaultCooldownSeconds: 7 * 24 * 60 * 60,
     difficulty: "中等",
     estimatedTime: "30分钟",
     category: "治理",
     type: "governance",
-    completed: false,
-    cooldownEnds: null,
+    repeatable: true,
   },
   {
     id: "share-project",
@@ -86,13 +84,12 @@ const tasks = [
     reward: 5,
     icon: Share2,
     color: "success",
-    cooldown: 24 * 60 * 60 * 1000, // 24小时
+    defaultCooldownSeconds: 24 * 60 * 60,
     difficulty: "简单",
-    estimatedTime: "2分钟", 
+    estimatedTime: "2分钟",
     category: "社区",
     type: "community",
-    completed: false,
-    cooldownEnds: null,
+    repeatable: true,
   },
   {
     id: "feedback",
@@ -101,13 +98,12 @@ const tasks = [
     reward: 10,
     icon: MessageCircle,
     color: "warning",
-    cooldown: 3 * 24 * 60 * 60 * 1000, // 3天
+    defaultCooldownSeconds: 3 * 24 * 60 * 60,
     difficulty: "中等",
     estimatedTime: "10分钟",
     category: "社区",
     type: "community",
-    completed: false,
-    cooldownEnds: null,
+    repeatable: true,
   },
   {
     id: "invite-friend",
@@ -116,13 +112,12 @@ const tasks = [
     reward: 15,
     icon: Users,
     color: "accent",
-    cooldown: 0, // 无冷却时间，每邀请一人获得一次
+    defaultCooldownSeconds: 0,
     difficulty: "中等",
     estimatedTime: "5分钟",
     category: "社区",
     type: "community",
-    completed: false,
-    cooldownEnds: null,
+    repeatable: true,
   },
   {
     id: "join-discord",
@@ -131,13 +126,12 @@ const tasks = [
     reward: 3,
     icon: Users,
     color: "accent",
-    cooldown: "无限制",
+    defaultCooldownSeconds: 0,
     difficulty: "简单",
     estimatedTime: "5分钟",
     category: "community",
     type: "community",
-    completed: false,
-    cooldownEnds: null,
+    repeatable: false,
   },
   {
     id: "share-twitter",
@@ -146,93 +140,58 @@ const tasks = [
     reward: 2,
     icon: Share2,
     color: "accent",
-    cooldown: "72h",
+    defaultCooldownSeconds: 72 * 60 * 60,
     difficulty: "简单",
     estimatedTime: "2分钟",
     category: "community",
     type: "community",
-    completed: false,
-    cooldownEnds: null,
+    repeatable: true,
   },
 ];
 
-// 任务状态存储和读取
-function useTaskStatus() {
-  const [taskStatus, setTaskStatus] = useState<{[key: string]: {completed: boolean, lastCompletedAt: number}}>({});
-  const { address } = useAccount();
+const GOVERNANCE_TASK_GET_ABI = [
+  {
+    "inputs": [
+      { "name": "_taskId", "type": "bytes32" }
+    ],
+    "name": "getTask",
+    "outputs": [
+      { "name": "reward", "type": "uint256" },
+      { "name": "cooldown", "type": "uint256" },
+      { "name": "active", "type": "bool" },
+      { "name": "repeatable", "type": "bool" }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+] as const;
 
-  // 从本地存储读取任务状态
-  useEffect(() => {
-    if (!address) return;
-    
-    try {
-      const storedStatus = localStorage.getItem(`taskStatus_${address}`);
-      if (storedStatus) {
-        setTaskStatus(JSON.parse(storedStatus));
-      }
-    } catch (error) {
-      console.error('Failed to load task status:', error);
-    }
-  }, [address]);
+const GOVERNANCE_TASK_STATUS_ABI = [
+  {
+    "inputs": [
+      { "name": "_user", "type": "address" },
+      { "name": "_taskId", "type": "bytes32" }
+    ],
+    "name": "getTaskLastCompletion",
+    "outputs": [
+      { "name": "", "type": "uint256" }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+] as const;
 
-  // 完成任务并保存状态
-  const completeTask = (taskId: string) => {
-    if (!address) return false;
-    
-    const newStatus = {
-      ...taskStatus,
-      [taskId]: {
-        completed: true,
-        lastCompletedAt: Date.now()
-      }
-    };
-    
-    setTaskStatus(newStatus);
-    try {
-      localStorage.setItem(`taskStatus_${address}`, JSON.stringify(newStatus));
-    } catch (error) {
-      console.error('Failed to save task status:', error);
-    }
-    return true;
-  };
-
-  // 检查任务是否可以完成(考虑冷却时间)
-  const canCompleteTask = (taskId: string) => {
-    if (!address) return false;
-    
-    const task = tasks.find(t => t.id === taskId);
-    if (!task) return false;
-    
-    const status = taskStatus[taskId];
-    if (!status || !status.completed) return true;
-    
-    // 如果任务有冷却时间且冷却未结束，则不能完成
-    if (task.cooldown > 0 && (Date.now() - status.lastCompletedAt) < task.cooldown) {
-      return false;
-    }
-    
-    return true;
-  };
-
-  // 获取任务冷却结束剩余时间
-  const getTaskCooldownRemaining = (taskId: string) => {
-    if (!address) return 0;
-    
-    const task = tasks.find(t => t.id === taskId);
-    if (!task || task.cooldown === 0) return 0;
-    
-    const status = taskStatus[taskId];
-    if (!status || !status.completed) return 0;
-    
-    const elapsed = Date.now() - status.lastCompletedAt;
-    const remaining = Math.max(0, task.cooldown - elapsed);
-    
-    return remaining;
-  };
-
-  return { taskStatus, completeTask, canCompleteTask, getTaskCooldownRemaining };
-}
-
+const GOVERNANCE_TASK_WRITE_ABI = [
+  {
+    "inputs": [
+      { "name": "_taskId", "type": "bytes32" }
+    ],
+    "name": "completeTask",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+] as const;
 // 会员等级显示组件
 const MembershipCard = ({ level, levelLabel, progress, govBalance, memberDays }: {
   level: string,
@@ -286,50 +245,55 @@ const MembershipCard = ({ level, levelLabel, progress, govBalance, memberDays }:
   );
 };
 
-const TaskCard = ({ 
-  task, 
+const TaskCard = ({
+  task,
   onComplete,
   canComplete,
-  cooldownRemaining
+  cooldownRemaining,
+  rewardAmount,
+  isProcessing,
+  active,
+  repeatable,
+  completed
 }: {
-  task: typeof tasks[0], 
-  onComplete: () => void,
+  task: typeof tasks[0],
+  onComplete: () => Promise<void>,
   canComplete: boolean,
-  cooldownRemaining: number
+  cooldownRemaining: number,
+  rewardAmount: string,
+  isProcessing: boolean,
+  active: boolean,
+  repeatable: boolean,
+  completed: boolean
 }) => {
-  const [isProcessing, setIsProcessing] = useState(false);
   const Icon = task.icon;
-  
+
   const handleComplete = async () => {
-    if (!canComplete || isProcessing) return;
-    
-    setIsProcessing(true);
-    try {
-      // 这里是任务完成的模拟逻辑
-      // 实际项目中应该调用合约或API
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      onComplete();
-      toast.success(`成功完成任务：${task.title}，获得 ${task.reward} GOV`);
-    } catch (error) {
-      toast.error(`任务完成失败：${(error as Error).message}`);
-    } finally {
-      setIsProcessing(false);
-    }
+    if (!canComplete || isProcessing || !active) return;
+
+    await onComplete();
   };
-  
+
   // 格式化剩余冷却时间
   const formatCooldown = () => {
-    if (cooldownRemaining === 0) return '';
-    
-    const hours = Math.floor(cooldownRemaining / (60 * 60 * 1000));
-    const minutes = Math.floor((cooldownRemaining % (60 * 60 * 1000)) / (60 * 1000));
-    
+    if (cooldownRemaining <= 0) return '';
+
+    const days = Math.floor(cooldownRemaining / (24 * 60 * 60));
+    const hours = Math.floor((cooldownRemaining % (24 * 60 * 60)) / (60 * 60));
+    const minutes = Math.floor((cooldownRemaining % (60 * 60)) / 60);
+
+    if (days > 0) {
+      return `${days}天${hours}小时后可再次完成`;
+    }
     if (hours > 0) {
       return `${hours}小时${minutes}分钟后可再次完成`;
     }
-    return `${minutes}分钟后可再次完成`;
+    if (minutes > 0) {
+      return `${minutes}分钟后可再次完成`;
+    }
+    return `不到一分钟后可再次完成`;
   };
-  
+
   return (
     <Card variant="glass" hover className="group">
       <CardContent className="pt-6 pb-6">
@@ -352,43 +316,70 @@ const TaskCard = ({
                 难度: {task.difficulty}
               </Badge>
               <Badge variant="secondary" className="text-xs">
-                <Clock className="w-3 h-3 mr-1" /> 
+                <Clock className="w-3 h-3 mr-1" />
                 {task.estimatedTime}
               </Badge>
               <div className="text-accent font-medium flex items-center">
                 <Coins className="w-4 h-4 mr-1" />
-                {task.reward} GOV
+                {rewardAmount} GOV
               </div>
+              {!repeatable && completed && (
+                <Badge variant="secondary" className="text-xs">一次性任务</Badge>
+              )}
             </div>
-            
-            {cooldownRemaining > 0 && (
+
+            {!active && (
+              <div className="text-red-400 text-xs mt-2 flex items-center">
+                <RefreshCw className="w-3 h-3 mr-1" />
+                任务暂未启用
+              </div>
+            )}
+
+            {repeatable && cooldownRemaining > 0 && (
               <div className="text-gray-400 text-xs mt-2">
                 <Clock className="w-3 h-3 inline mr-1" />
                 {formatCooldown()}
               </div>
             )}
+
+            {!repeatable && completed && (
+              <div className="text-primary text-xs mt-2 flex items-center">
+                <CheckCircle className="w-3 h-3 mr-1" />
+                已完成此任务
+              </div>
+            )}
           </div>
-          
-          <Button 
+
+          <Button
             variant="secondary"
             size="sm"
             onClick={handleComplete}
-            disabled={!canComplete || isProcessing}
+            disabled={!canComplete || isProcessing || !active}
           >
             {isProcessing ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                 处理中
               </>
+            ) : !active ? (
+              <>
+                暂不可用
+                <RefreshCw className="w-4 h-4 ml-2" />
+              </>
             ) : canComplete ? (
               <>
                 完成任务
                 <Sparkles className="w-4 h-4 ml-2" />
               </>
-            ) : (
+            ) : completed ? (
               <>
                 已完成
                 <Check className="w-4 h-4 ml-2" />
+              </>
+            ) : (
+              <>
+                冷却中
+                <Clock className="w-4 h-4 ml-2" />
               </>
             )}
           </Button>
@@ -399,19 +390,97 @@ const TaskCard = ({
 };
 
 export default function TasksPage() {
-  const { address, isConnected } = useAccount();
-  const router = useRouter();
-  const { taskStatus, completeTask, canCompleteTask, getTaskCooldownRemaining } = useTaskStatus();
-  const { data: govBalance } = useTokenBalance();
+  const { address } = useAccount();
+  const { balance: govBalanceRaw, refetch: refetchGovBalance } = useGovBalance();
+  const govBalanceDisplay = formatEther(govBalanceRaw);
   const [completingTask, setCompletingTask] = useState<string | null>(null);
-  
+  const { writeContractAsync } = useWriteContract();
+  const config = useConfig();
+
   // 按类别过滤任务
   const [activeCategory, setActiveCategory] = useState<string>("全部");
   const categories = ["全部", "日常", "治理", "社区"];
-  
-  const filteredTasks = activeCategory === "全部" 
-    ? tasks 
+
+  const filteredTasks = activeCategory === "全部"
+    ? tasks
     : tasks.filter(task => task.category === activeCategory);
+
+  const taskIds = useMemo(
+    () => tasks.map((task) => stringToHex(task.id, { size: 32 })),
+    []
+  );
+
+  const {
+    data: taskConfigs,
+    refetch: refetchTaskConfigs,
+  } = useReadContracts({
+    contracts: taskIds.map((taskId) => ({
+      address: CONTRACT_ADDRESSES.Governance,
+      abi: GOVERNANCE_TASK_GET_ABI,
+      functionName: 'getTask',
+      args: [taskId],
+    })),
+  });
+
+  const {
+    data: taskCompletion,
+    refetch: refetchTaskCompletion,
+  } = useReadContracts({
+    contracts: address
+      ? taskIds.map((taskId) => ({
+          address: CONTRACT_ADDRESSES.Governance,
+          abi: GOVERNANCE_TASK_STATUS_ABI,
+          functionName: 'getTaskLastCompletion',
+          args: [address as `0x${string}`, taskId],
+        }))
+      : [],
+    query: {
+      enabled: !!address,
+    },
+  });
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+
+  const taskStates = tasks.map((task, index) => {
+    const chainConfig = taskConfigs?.[index]?.result as
+      | readonly [bigint, bigint, boolean, boolean]
+      | undefined;
+    const reward = chainConfig ? chainConfig[0] : BigInt(task.reward) * (10n ** 18n);
+    const cooldownSeconds = chainConfig ? Number(chainConfig[1]) : task.defaultCooldownSeconds;
+    const active = chainConfig ? chainConfig[2] : true;
+    const repeatable = chainConfig ? chainConfig[3] : task.repeatable;
+    const completionResult = taskCompletion?.[index]?.result as bigint | undefined;
+    const lastCompleted = completionResult ? Number(completionResult) : 0;
+
+    let canComplete = Boolean(address) && active;
+    let cooldownRemaining = 0;
+    let completed = false;
+
+    if (!address) {
+      canComplete = false;
+    } else if (!repeatable) {
+      completed = lastCompleted > 0;
+      canComplete = canComplete && !completed;
+    } else {
+      if (cooldownSeconds > 0) {
+        const availableAt = lastCompleted + cooldownSeconds;
+        cooldownRemaining = Math.max(0, availableAt - nowSeconds);
+        canComplete = canComplete && nowSeconds >= availableAt;
+      } else {
+        canComplete = canComplete && nowSeconds > lastCompleted;
+      }
+    }
+
+    return {
+      reward,
+      cooldownSeconds,
+      active,
+      repeatable,
+      canComplete,
+      cooldownRemaining,
+      completed,
+    };
+  });
 
   // 会员等级数据
   const levels = [
@@ -425,9 +494,9 @@ export default function TasksPage() {
 
   // 获取当前会员等级
   const getCurrentLevel = () => {
-    const balance = govBalance?.formatted ? parseFloat(govBalance.formatted) : 0;
+    const balance = govBalanceRaw ? parseFloat(formatEther(govBalanceRaw)) : 0;
     let currentLevel = levels[0];
-    
+
     for (let i = levels.length - 1; i >= 0; i--) {
       if (balance >= levels[i].threshold) {
         currentLevel = levels[i];
@@ -437,11 +506,11 @@ export default function TasksPage() {
     
     return currentLevel;
   };
-  
+
   // 获取下一个会员等级
   const getNextLevel = () => {
-    const balance = govBalance?.formatted ? parseFloat(govBalance.formatted) : 0;
-    
+    const balance = govBalanceRaw ? parseFloat(formatEther(govBalanceRaw)) : 0;
+
     for (let i = 0; i < levels.length; i++) {
       if (balance < levels[i].threshold) {
         return {
@@ -461,8 +530,37 @@ export default function TasksPage() {
   const nextLevel = getNextLevel();
 
   // 处理任务完成
-  const handleTaskComplete = (taskId: string) => {
-    completeTask(taskId);
+  const handleTaskComplete = async (taskId: string, title: string) => {
+    if (!address) {
+      toast.error("请先连接钱包");
+      return;
+    }
+
+    const taskKey = stringToHex(taskId, { size: 32 });
+
+    try {
+      setCompletingTask(taskId);
+      const hash = await writeContractAsync({
+        address: CONTRACT_ADDRESSES.Governance,
+        abi: GOVERNANCE_TASK_WRITE_ABI,
+        functionName: 'completeTask',
+        args: [taskKey],
+      });
+
+      await waitForTransactionReceipt(config, { hash });
+
+      toast.success(`成功完成任务：${title}`);
+      await Promise.all([
+        refetchTaskCompletion(),
+        refetchGovBalance(),
+        refetchTaskConfigs(),
+      ]);
+    } catch (error) {
+      console.error(error);
+      toast.error(`任务完成失败：${(error as Error).message}`);
+    } finally {
+      setCompletingTask(null);
+    }
   };
 
   return (
@@ -481,15 +579,15 @@ export default function TasksPage() {
         </div>
         
         {/* 会员信息 */}
-        {address && (
-          <MembershipCard 
-            level={currentLevel.name}
-            levelLabel={currentLevel.name}
-            progress={nextLevel.progress}
-            govBalance={govBalance?.formatted || "0"}
-            memberDays={30}
-          />
-        )}
+          {address && (
+            <MembershipCard
+              level={currentLevel.name}
+              levelLabel={currentLevel.name}
+              progress={nextLevel.progress}
+              govBalance={govBalanceDisplay}
+              memberDays={30}
+            />
+          )}
         
         {/* 类别筛选 */}
         <div className="flex flex-wrap gap-2 mb-6">
@@ -508,16 +606,29 @@ export default function TasksPage() {
         {/* 任务列表 */}
         <div className="space-y-4">
           {filteredTasks.map((task) => (
+            (() => {
+              const index = tasks.findIndex((t) => t.id === task.id);
+              const state = taskStates[index];
+              const rewardLabel = formatEther(state.reward);
+
+              return (
             <TaskCard
               key={task.id}
               task={task}
-              onComplete={() => handleTaskComplete(task.id)}
-              canComplete={canCompleteTask(task.id)}
-              cooldownRemaining={getTaskCooldownRemaining(task.id)}
+              onComplete={() => handleTaskComplete(task.id, task.title)}
+              canComplete={state.canComplete}
+              cooldownRemaining={state.cooldownRemaining}
+              rewardAmount={rewardLabel}
+              isProcessing={completingTask === task.id}
+              active={state.active}
+              repeatable={state.repeatable}
+              completed={state.completed}
             />
+              );
+            })()
           ))}
         </div>
-        
+
         {/* 没有登录时显示提示 */}
         {!address && (
           <div className="text-center py-20">

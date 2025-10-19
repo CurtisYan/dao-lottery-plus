@@ -183,17 +183,40 @@ export const ERC721_ABI = [
   },
 ] as const;
 
+export const ERC1155_ABI = [
+  {
+    inputs: [
+      { name: "account", type: "address" },
+      { name: "id", type: "uint256" },
+    ],
+    name: "balanceOf",
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [{ name: "id", type: "uint256" }],
+    name: "uri",
+    outputs: [{ name: "", type: "string" }],
+    stateMutability: "view",
+    type: "function",
+  },
+] as const;
+
 // 简化的ABI定义（注意：必须在 ERC20_ABI 和 ERC721_ABI 定义之后）
 export const ABIS = {
   GovToken: ERC20_ABI,
   RewardToken: ERC20_ABI,
   ParticipationNFT: ERC721_ABI,
-  StatusNFT: ERC721_ABI,
+  StatusNFT: ERC1155_ABI,
   Governance: [
     "function createProposal(string _desc, uint _duration) external",
     "function voteProposal(uint8 _proposalId, bool _choice) external",
     "function finalizeProposal(uint8 _proposalId) external",
-    "function getProposal(uint8 _proposalId) external view returns (tuple)",
+    "function initiateRemovalVote(uint8 _proposalId, string _reason, uint256 _duration) external",
+    "function voteOnRemoval(uint8 _proposalId, bool _support) external",
+    "function finalizeRemovalVote(uint8 _proposalId) external",
+    "function getProposal(uint8 _proposalId) external view returns (string,address,uint256,uint256,bool,bool,uint256,bool)",
     "function getProposalCount() external view returns (uint8)",
     "function getEligibleForLottery(uint8 _proposalId) external view returns (address[])",
     "function getProposalFinlized(uint8 _proposalId) external view returns (bool)",
@@ -201,16 +224,23 @@ export const ABIS = {
     "function getVoteChoice(uint8 _proposalId, address _user) external view returns (bool)",
     "function getTotalVotes() external view returns (uint)",
     "function getMemberSince(address user) external view returns (uint256)",
+    "function getRemovalVote(uint8 _proposalId) external view returns (bool,string,address,uint256,uint256,uint256,bool)",
+    "function hasRemovalVoted(uint8 _proposalId, address _user) external view returns (bool)",
+    "function getRemovalEligibility(address account) external view returns (bool,bool,bool,uint256)",
     "function setAdmin(address _addr, bool _isAdmin) external",
     "function setFEE(uint _fee) external",
     "function setTHRESHOLD(uint _threshold) external",
     "function setLotteryContract(address _lottery) external",
+    "function setStatusNFT(address _statusNFT) external",
     "function rewardVoter(address _voter, uint8 _amount) external",
     "event create(address indexed proposer, uint8 indexed proposalId)",
     "event vote(address indexed voter, uint8 indexed proposalId, bool indexed choice)",
     "event finalize(uint8 indexed proposalId, bool indexed result)",
     "event execute(uint8 indexed proposalId)",
     "event claimGOV(address indexed winner, uint8 indexed proposalId)",
+    "event RemovalVoteInitiated(uint8 indexed proposalId, address indexed initiator, uint256 deadline, string reason)",
+    "event RemovalVoteCast(uint8 indexed proposalId, address indexed voter, bool indexed support)",
+    "event RemovalVoteFinalized(uint8 indexed proposalId, bool removed, uint256 yesVotes, uint256 noVotes, uint256 slashedAmount)",
   ],
   Lottery: [
     "function rewardAmount() view returns (uint256)",
