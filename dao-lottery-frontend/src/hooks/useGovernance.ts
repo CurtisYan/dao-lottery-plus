@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react'
 import { useAccount, useConfig, useReadContract, useWriteContract } from 'wagmi'
 import { waitForTransactionReceipt } from 'wagmi/actions'
+import { parseUnits } from 'viem'
 import { CONTRACT_ADDRESSES } from '@/lib/contracts'
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
@@ -30,8 +31,8 @@ const govTokenAbi = [
   },
 ] as const
 
-export const GOV_VOTE_COST = BigInt(1)
-export const GOV_PROPOSAL_FEE = BigInt(10)
+export const GOV_VOTE_COST = parseUnits('1', 18)
+export const GOV_PROPOSAL_FEE = parseUnits('10', 18)
 
 const governanceAbi = [
   {

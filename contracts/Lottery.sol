@@ -9,14 +9,17 @@ contract Lottery is Ownable{
     RewardToken public rewardToken;
     Governance public governance;
 
-    mapping(uint => address) public proposalWinner;
-    mapping(uint => bool) public hasClaimed;
-    mapping(uint => uint) public proposalPool; // 每个提案的奖池金额
+    mapping(uint256 => address) public proposalWinner;
+    mapping(uint256 => bool) public hasClaimed;
+    // 每个提案的奖池金额，单位为 GOV 的最小单位（UNIT = 1e18）
+    mapping(uint256 => uint256) public proposalPool;
     
     // 奖池分配比例 - 重新设计
     uint public constant REWARD_RATIO = 80; // 80% 转换为RWD给中奖者
     uint public constant BURN_RATIO = 20; // 20% 销毁GOV，减少通胀
-    
+
+    event PoolDistributed(uint8 indexed proposalId, address indexed winner, uint256 rewardAmount, uint256 burnAmount);
+
     constructor(address _rewardToken,address _governance) 
         Ownable(msg.sender){
         rewardToken = RewardToken(_rewardToken);    
@@ -24,9 +27,9 @@ contract Lottery is Ownable{
     }
 
     // 更新奖池金额（由Governance合约调用）
-    function updatePool(uint8 _proposalId, uint _amount) external {
+    function updatePool(uint8 _proposalId, uint256 _amount) external {
         require(msg.sender == address(governance), "Only governance can update pool");
-        proposalPool[_proposalId] = _amount;
+        proposalPool[_proposalId] += _amount;
     }
 
     function drawWinner(uint8 _proposalId) external onlyOwner(){
@@ -46,20 +49,23 @@ contract Lottery is Ownable{
         _distributePool(_proposalId);
     }
 
-    // 分配奖池 - 重新设计
+    // 分配奖池 - 重新设计（所有金额均以 18 位精度的 GOV / REWARD 最小单位计）
     function _distributePool(uint8 _proposalId) internal {
-        uint poolAmount = proposalPool[_proposalId];
+        uint256 poolAmount = proposalPool[_proposalId];
         if (poolAmount == 0) return;
-        
+
         // 80% 转换为RWD给中奖者
-        uint rewardAmount = (poolAmount * REWARD_RATIO) / 100;
+        uint256 rewardAmount = (poolAmount * REWARD_RATIO) / 100;
         address winner = _getWinner(_proposalId);
         rewardToken.mint(winner, rewardAmount);
-        
+
         // 20% 销毁GOV，减少通胀压力
-        uint burnAmount = (poolAmount * BURN_RATIO) / 100;
+        uint256 burnAmount = (poolAmount * BURN_RATIO) / 100;
         // 注意：这里GOV已经被burnFrom消耗，所以不需要额外销毁
         // 销毁逻辑已经在Governance合约的voteProposal中实现
+        proposalPool[_proposalId] = 0;
+
+        emit PoolDistributed(_proposalId, winner, rewardAmount, burnAmount);
     }
 
     // 领取奖励（包含GOV奖励）
@@ -95,7 +101,7 @@ contract Lottery is Ownable{
         return hasClaimed[_proposalId];
     }
     
-    function getPoolAmount(uint8 _proposalId) external view returns(uint) {
+    function getPoolAmount(uint8 _proposalId) external view returns(uint256) {
         return proposalPool[_proposalId];
     }
 }

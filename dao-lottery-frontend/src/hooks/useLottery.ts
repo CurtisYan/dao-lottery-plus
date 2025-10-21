@@ -6,6 +6,7 @@ import { CONTRACT_ADDRESSES } from '@/lib/contracts'
 import { sepolia } from '@/lib/wagmi'
 import { useProposalCount } from '@/hooks/useGovernance'
 import { useGovBalance } from '@/hooks/useGovBalance'
+import { parseUnits } from 'viem'
 
 // 获取奖池信息
 export function usePrizeInfo() {
@@ -31,11 +32,13 @@ export function usePrizeInfo() {
   
   // 如果没有提案，使用默认值
   if (currentProposalId === 0) {
+    const govBonus = parseUnits('11', 18)
     const prizeInfo = {
-      rewardAmount: BigInt(0),
-      govAmount: BigInt(11),
-      totalPrize: BigInt(11),
-      participationCount: BigInt(0)
+      rewardAmount: 0n,
+      govAmount: govBonus,
+      totalPrize: govBonus,
+      participationCount: 0n,
+      burnAmount: 0n,
     };
     
     return {
@@ -66,11 +69,17 @@ export function usePrizeInfo() {
   console.log('奖池金额:', poolAmount?.toString(), '提案ID:', currentProposalId);
   
   // 从合约读取实际奖励值
+  const poolValue = poolAmount || 0n
+  const rewardPortion = (poolValue * 80n) / 100n
+  const burnPortion = poolValue - rewardPortion
+  const govBonus = parseUnits('11', 18)
+
   const prizeInfo = {
-    rewardAmount: poolAmount || BigInt(0), // 从合约获取奖池金额
-    govAmount: BigInt(11), // 根据合约claimReward方法中的值
-    totalPrize: (poolAmount || BigInt(0)) + BigInt(11),
-    participationCount: BigInt(1) // 参与NFT数量
+    rewardAmount: rewardPortion,
+    govAmount: govBonus,
+    totalPrize: rewardPortion + govBonus,
+    participationCount: 1n,
+    burnAmount: burnPortion,
   }
 
   return { 
@@ -169,7 +178,7 @@ export function useLotteryEligibility() {
     functionName: 'THRESHOLD',
   })
   
-  const requiredAmount = threshold || BigInt(10) // 默认值
+  const requiredAmount = threshold || parseUnits('10', 18) // 默认值
   const isEligible = govBalance >= requiredAmount
   const isLoading = balanceLoading || thresholdLoading
   

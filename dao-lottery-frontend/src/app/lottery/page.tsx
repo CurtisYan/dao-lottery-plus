@@ -602,7 +602,10 @@ export default function LotteryPage() {
                   </div>
                   <div>
                     <div className="text-white font-medium">奖励分配</div>
-                    <div className="text-sm text-gray-400">80% 奖池转换为REWARD代币奖励给中奖者，20% GOV被销毁以减少通胀</div>
+                    <div className="text-sm text-gray-400">
+                      80% 奖池转换为REWARD代币奖励给中奖者（约 {formatEther(prizeInfo.rewardAmount)} REWARD），
+                      20% GOV（约 {formatEther(prizeInfo.burnAmount)} GOV）被销毁以减少通胀
+                    </div>
                   </div>
                 </div>
                 

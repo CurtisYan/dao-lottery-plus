@@ -24,7 +24,7 @@ contract Governance is Ownable {
     }
 
     struct TaskConfig {
-        uint256 reward;
+        uint256 reward; // 以 GOV 代币数量计（未乘 UNIT）
         uint256 cooldown;
         bool active;
         bool repeatable;
@@ -57,21 +57,26 @@ contract Governance is Ownable {
 
     mapping(uint8 => RemovalVote) private removalVotes;
 
-    uint256 public constant HIGH_TIER_MIN_GOV = 200 * 1e18;
-    uint256 public constant LOW_TIER_MIN_GOV = 500 * 1e18;
+    uint256 public constant HIGH_TIER_MIN_GOV = 200 * 1 ether;
+    uint256 public constant LOW_TIER_MIN_GOV = 500 * 1 ether;
     uint256 public constant MIN_REMOVAL_VOTE_DURATION = 1 hours;
 
-    uint public FEE;
-    uint public THRESHOLD;
-    uint public totalVotes; // 总投票数，用于计算奖池
+    uint256 public FEE;
+    uint256 public THRESHOLD;
+    uint256 public totalVotes; // 总投票数，用于计算奖池
+    uint256 public voteCost;
+    uint256 public basePoolReward; // 固定奖池奖励（已乘 UNIT）
 
     constructor(address _govToken,address _participationNFT)
         Ownable(msg.sender){
         isAdmin[msg.sender] = true;
         govToken = GovToken(_govToken);
         participationNFT = ParticipationNFT(_participationNFT);
-        FEE = 10;
-        THRESHOLD = 10;
+        uint256 unit = govToken.UNIT();
+        FEE = 10 * unit;
+        THRESHOLD = 10 * unit;
+        voteCost = unit;
+        basePoolReward = 100 * unit;
     }
 
     event create(address indexed proposer, uint8 indexed proposalId);
@@ -91,7 +96,7 @@ contract Governance is Ownable {
     }
 
     function createProposal(string memory _desc,uint _duration) external {
-        require(govToken.balanceOf(msg.sender) > FEE, "Not enough GOV");
+        require(govToken.balanceOf(msg.sender) >= FEE, "Not enough GOV");
         require(_duration > 60,"Duration to short");
 
         govToken.burnFrom(msg.sender, FEE);
@@ -111,8 +116,8 @@ contract Governance is Ownable {
     }
 
     function voteProposal(uint8 _proposalId, bool _choice) external {
-        uint balance = govToken.balanceOf(msg.sender);
-        require(balance > THRESHOLD,"You didn't meet the voting threshold");
+        uint256 balance = govToken.balanceOf(msg.sender);
+        require(balance >= THRESHOLD,"You didn't meet the voting threshold");
         // avoid from contract swiping
         require(msg.sender == tx.origin, "Only tx.origin can vote");
         Proposal storage proposal = proposals[_proposalId];
@@ -121,9 +126,9 @@ contract Governance is Ownable {
         require(!proposal.hasVoted[msg.sender], "You have already voted");
         require(!proposal.finalized, "Proposal has been finalized");
         require(!proposal.removed, "Proposal removed");
-        require(govToken.balanceOf(msg.sender) > 1, "Not enough GOV tokens");
-        
-        govToken.burnFrom(msg.sender, 1);
+        require(balance >= voteCost, "Not enough GOV tokens");
+
+        govToken.burnFrom(msg.sender, voteCost);
         totalVotes++; // 增加总投票数
 
         // 记录首次成为DAO成员的时间
@@ -151,21 +156,22 @@ contract Governance is Ownable {
         require(!proposal.removed, "Proposal removed");
         proposal.pass = proposal.yesVotes > proposal.noVote;
         
-        uint correctVotes = 0;
+        uint256 correctVoteWeight = 0;
         for(uint i = 0; i < proposal.voters.length; i++){
             address voter = proposal.voters[i];
             bool choice = proposal.voteChoice[voter];
             if(choice == proposal.pass){
                 elgibleForLottery[_proposalId].push(voter);
-                correctVotes++;
+                correctVoteWeight += voteCost;
                 // 发放参与NFT给voter
                 participationNFT.safeMint(voter);
             }
         }
-        
+
         // 每个正确投票贡献1个GOV到奖池 + 固定100GOV
         if(address(lottery) != address(0)) {
-            lottery.updatePool(_proposalId, correctVotes + 100);
+            uint256 poolContribution = correctVoteWeight + basePoolReward;
+            lottery.updatePool(_proposalId, poolContribution);
         }
         
         proposal.finalized = true;
@@ -174,7 +180,7 @@ contract Governance is Ownable {
 
     function rewardVoter(address _voter, uint8 _amount) external {
         require(msg.sender == address(lottery), "Only lottery can reward voters");
-        govToken.mint(_voter, _amount);
+        govToken.mint(_voter, uint256(_amount) * govToken.UNIT());
     }
 
     function setTask(bytes32 _taskId, uint256 _reward, uint256 _cooldown, bool _active, bool _repeatable) external onlyAdmin {
@@ -211,7 +217,7 @@ contract Governance is Ownable {
         }
 
         lastTaskCompletion[msg.sender][_taskId] = block.timestamp;
-        govToken.mint(msg.sender, task.reward);
+        govToken.mint(msg.sender, task.reward * govToken.UNIT());
 
         emit TaskCompleted(msg.sender, _taskId, task.reward);
     }
@@ -315,12 +321,12 @@ contract Governance is Ownable {
     function setAdmin(address _addr,bool _isAdmin)public onlyOwner(){
         isAdmin[_addr] = _isAdmin;
     }
-    function setFEE(uint _fee)public onlyAdmin{
-        FEE = _fee;
+    function setFEE(uint256 _fee)public onlyAdmin{
+        FEE = _fee * govToken.UNIT();
     }
     // 只有管理员能修改抽奖至少持有多少 GOV 代币
-    function setTHRESHOLD(uint _threshold)public onlyAdmin{
-        THRESHOLD = _threshold;
+    function setTHRESHOLD(uint256 _threshold)public onlyAdmin{
+        THRESHOLD = _threshold * govToken.UNIT();
     }
 
     function getRemovalVote(uint8 _proposalId) external view returns (
