@@ -32,6 +32,8 @@ import {
   useFinalizeRemovalVote,
   useRemovalEligibility,
   useHasRemovalVoted,
+  GOV_VOTE_COST,
+  GOV_PROPOSAL_FEE,
 } from '@/hooks/useGovernance'
 import { useGovTokenBalance } from '@/hooks/useTokenBalance'
 import { toast } from 'sonner'
@@ -66,9 +68,9 @@ const ProposalCard = ({
     balance: bigint
   }
 }) => {
-  const { proposal, isLoading, error, refetch } = useProposal(proposalId)
+  const { proposal, isLoading, isError, refetch } = useProposal(proposalId)
   const { removal, refetch: refetchRemoval } = useRemovalVote(proposalId)
-  const { vote, isPending } = useVote()
+  const { vote, isPending, isApproving } = useVote()
   const { initiateRemovalVote, isPending: isInitiatingRemoval } = useInitiateRemovalVote()
   const { voteRemoval, isPending: isVotingRemoval } = useVoteOnRemoval()
   const { finalizeRemovalVote, isPending: isFinalizingRemoval } = useFinalizeRemovalVote()
@@ -94,7 +96,7 @@ const ProposalCard = ({
     )
   }
 
-  if (error || !proposal) {
+  if (isError || !proposal) {
     return (
       <Card variant="glass" hover className="group">
         <CardContent className="py-16 text-center">
@@ -114,11 +116,11 @@ const ProposalCard = ({
       case 'passed':
         return 'success'
       case 'rejected':
-        return 'danger'
+        return 'error'
       case 'awaiting-finalization':
         return 'secondary'
       case 'removed':
-        return 'danger'
+        return 'error'
       default:
         return 'secondary'
     }
@@ -190,12 +192,28 @@ const ProposalCard = ({
         setVotingAgainst(true)
       }
 
-      await vote(proposal.id, support)
+      const result = await vote(proposal.id, support)
+
+      if (result?.approvalHash) {
+        toast.success(`授权成功，额度 ${GOV_VOTE_COST.toString()} GOV`)
+      }
+
       toast.success(`投票${support ? '支持' : '反对'}成功`)
       refetch()
     } catch (error) {
       console.error('投票失败:', error)
-      toast.error((error as Error).message)
+      const stage = (error as { stage?: string }).stage
+      const message = (error as Error).message || '操作失败'
+
+      if (stage === 'approval') {
+        toast.error(`授权失败：${message}`)
+      } else if (stage === 'vote') {
+        toast.error(`投票失败：${message}`)
+      } else if (stage === 'wallet') {
+        toast.error(message)
+      } else {
+        toast.error(`操作失败：${message}`)
+      }
     } finally {
       setVotingFor(false)
       setVotingAgainst(false)
@@ -289,14 +307,14 @@ const ProposalCard = ({
                     {getStatusText(proposal.status)}
                   </Badge>
                   {isActive && (
-                    <Badge variant="ghost" className="ml-2">
+                    <Badge variant="outline" className="ml-2">
                       <Clock className="w-3 h-3 mr-1" />
                       {daysLeft}天后结束
                     </Badge>
                   )}
                 </div>
                 {removal && !proposal.removed && (
-                  <Badge variant="danger" className="w-max">
+                  <Badge variant="error" className="w-max">
                     <ShieldAlert className="w-3 h-3 mr-1" />恶意删除投票中
                   </Badge>
                 )}
@@ -368,28 +386,38 @@ const ProposalCard = ({
                     size="sm"
                     className="flex-1"
                     onClick={() => handleVote(true)}
-                    disabled={isPending || votingFor || votingAgainst}
+                    disabled={isPending || isApproving || votingFor || votingAgainst}
                   >
                     {votingFor ? (
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        {isApproving ? '授权中...' : '提交中...'}
+                      </>
                     ) : (
-                      <CheckCircle className="w-4 h-4 mr-2" />
+                      <>
+                        <CheckCircle className="w-4 h-4 mr-2" />
+                        支持
+                      </>
                     )}
-                    支持
                   </Button>
                   <Button
                     variant={votingAgainst ? 'primary' : 'secondary'}
                     size="sm"
                     className="flex-1"
                     onClick={() => handleVote(false)}
-                    disabled={isPending || votingFor || votingAgainst}
+                    disabled={isPending || isApproving || votingFor || votingAgainst}
                   >
                     {votingAgainst ? (
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        {isApproving ? '授权中...' : '提交中...'}
+                      </>
                     ) : (
-                      <XCircle className="w-4 h-4 mr-2" />
+                      <>
+                        <XCircle className="w-4 h-4 mr-2" />
+                        反对
+                      </>
                     )}
-                    反对
                   </Button>
                 </div>
               ) : (
@@ -439,7 +467,7 @@ const ProposalCard = ({
                     {removalActive && (
                       <div className="mt-4 flex gap-3">
                         <Button
-                          variant={removalVotingFor ? 'secondary' : 'destructive'}
+                          variant={removalVotingFor ? 'secondary' : 'danger'}
                           size="sm"
                           className="flex-1"
                           onClick={() => handleRemovalVote(true)}
@@ -586,8 +614,12 @@ export default function GovernancePage() {
   const [days, setDays] = useState(1)
   const [hours, setHours] = useState(0)
   const [minutes, setMinutes] = useState(0)
-  const [isCreating, setIsCreating] = useState(false)
-  const { createProposal } = useCreateProposal()
+  const {
+    createProposal,
+    isPending: isCreatingProposal,
+    isApproving: isApprovingProposal,
+  } = useCreateProposal()
+  const isProposalSubmitting = isCreatingProposal || isApprovingProposal
   
   // 计算总秒数
   const calculateDurationInSeconds = () => {
@@ -606,10 +638,14 @@ export default function GovernancePage() {
       toast.error('提案持续时间至少需要1分钟')
       return
     }
-    
+
     try {
-      setIsCreating(true)
-      await createProposal(proposalDesc, durationInSeconds)
+      const result = await createProposal(proposalDesc, durationInSeconds)
+
+      if (result?.approvalHash) {
+        toast.success(`授权成功，额度 ${GOV_PROPOSAL_FEE.toString()} GOV`)
+      }
+
       toast.success('提案创建成功！')
       setIsDialogOpen(false)
       setProposalDesc('')
@@ -619,9 +655,18 @@ export default function GovernancePage() {
       }, 2000)
     } catch (error) {
       console.error('创建提案失败:', error)
-      toast.error(`创建提案失败: ${(error as Error).message}`)
-    } finally {
-      setIsCreating(false)
+      const stage = (error as { stage?: string }).stage
+      const message = (error as Error).message || '操作失败'
+
+      if (stage === 'approval') {
+        toast.error(`授权失败：${message}`)
+      } else if (stage === 'proposal') {
+        toast.error(`创建提案失败：${message}`)
+      } else if (stage === 'wallet') {
+        toast.error(message)
+      } else {
+        toast.error(`创建提案失败：${message}`)
+      }
     }
   }
 
@@ -647,7 +692,9 @@ export default function GovernancePage() {
         {/* 页面标题 */}
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-white mb-2">DAO 治理</h1>
-          <p className="text-gray-300">参与社区决策，塑造项目未来</p>
+          <p className="text-gray-300">
+            参与社区决策，塑造项目未来。首次投票或创建提案时需要先授权 GOV 代币，请在钱包中依次确认授权与操作交易。
+          </p>
         </div>
 
         {/* 统计信息 */}
@@ -805,13 +852,31 @@ export default function GovernancePage() {
             </div>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setIsDialogOpen(false)}>取消</Button>
-              <Button 
-                variant="primary" 
+              <Button
+                variant="primary"
                 onClick={handleCreateProposal}
-                disabled={isCreating || !proposalDesc.trim() || calculateDurationInSeconds() < 60}
+                disabled={
+                  isProposalSubmitting ||
+                  !proposalDesc.trim() ||
+                  calculateDurationInSeconds() < 60
+                }
               >
-                {isCreating ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Plus className="w-4 h-4 mr-2" />}
-                {isCreating ? '创建中...' : '创建提案'}
+                {isApprovingProposal ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    授权中...
+                  </>
+                ) : isCreatingProposal ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    创建中...
+                  </>
+                ) : (
+                  <>
+                    <Plus className="w-4 h-4 mr-2" />
+                    创建提案
+                  </>
+                )}
               </Button>
             </DialogFooter>
           </DialogContent>

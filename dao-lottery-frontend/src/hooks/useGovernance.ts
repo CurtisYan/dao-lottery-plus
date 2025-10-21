@@ -1,10 +1,37 @@
 'use client'
 
-import { useMemo } from 'react'
-import { useAccount, useReadContract, useWriteContract } from 'wagmi'
+import { useMemo, useState } from 'react'
+import { useAccount, useConfig, useReadContract, useWriteContract } from 'wagmi'
+import { waitForTransactionReceipt } from 'wagmi/actions'
 import { CONTRACT_ADDRESSES } from '@/lib/contracts'
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
+
+const govTokenAbi = [
+  {
+    inputs: [
+      { name: 'owner', type: 'address' },
+      { name: 'spender', type: 'address' },
+    ],
+    name: 'allowance',
+    outputs: [{ type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [
+      { name: 'spender', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    name: 'approve',
+    outputs: [{ type: 'bool' }],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+] as const
+
+export const GOV_VOTE_COST = BigInt(1)
+export const GOV_PROPOSAL_FEE = BigInt(10)
 
 const governanceAbi = [
   {
@@ -144,7 +171,7 @@ export function useProposal(proposalId: number) {
     address: CONTRACT_ADDRESSES.Governance,
     abi: governanceAbi,
     functionName: 'getProposal',
-    args: [BigInt(proposalId)],
+    args: [proposalId],
     query: {
       enabled: proposalId > 0,
     },
@@ -193,38 +220,156 @@ export function useProposal(proposalId: number) {
   }
 }
 
+export function useGovTokenAllowance(spender: `0x${string}` = CONTRACT_ADDRESSES.Governance) {
+  const { address } = useAccount()
+
+  const { data, isLoading, isError, refetch } = useReadContract({
+    address: CONTRACT_ADDRESSES.GovToken,
+    abi: govTokenAbi,
+    functionName: 'allowance',
+    args: [address ?? ZERO_ADDRESS, spender],
+    query: {
+      enabled: !!address,
+    },
+  })
+
+  return {
+    allowance: (data as bigint | undefined) ?? BigInt(0),
+    isLoading,
+    isError,
+    refetch,
+  }
+}
+
 export function useVote() {
-  const { writeContractAsync, isPending } = useWriteContract()
+  const { address } = useAccount()
+  const config = useConfig()
+  const { allowance, refetch: refetchAllowance } = useGovTokenAllowance()
+  const { writeContractAsync: writeGovernance } = useWriteContract()
+  const { writeContractAsync: writeGovToken } = useWriteContract()
+  const [isApproving, setIsApproving] = useState(false)
+  const [isVoting, setIsVoting] = useState(false)
 
   const vote = async (proposalId: number, support: boolean) => {
-    return await writeContractAsync({
-      address: CONTRACT_ADDRESSES.Governance,
-      abi: governanceAbi,
-      functionName: 'voteProposal',
-      args: [BigInt(proposalId), support],
-    })
+    if (!address) {
+      throw Object.assign(new Error('请先连接钱包'), { stage: 'wallet' as const })
+    }
+
+    let approvalHash: `0x${string}` | null = null
+
+    if (allowance < GOV_VOTE_COST) {
+      try {
+        setIsApproving(true)
+        approvalHash = await writeGovToken({
+          address: CONTRACT_ADDRESSES.GovToken,
+          abi: govTokenAbi,
+          functionName: 'approve',
+          args: [CONTRACT_ADDRESSES.Governance, GOV_VOTE_COST],
+        })
+        await waitForTransactionReceipt(config, { hash: approvalHash })
+        await refetchAllowance()
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error('授权失败')
+        ;(err as { stage?: string }).stage = 'approval'
+        throw err
+      } finally {
+        setIsApproving(false)
+      }
+    }
+
+    try {
+      setIsVoting(true)
+      const voteHash = await writeGovernance({
+        address: CONTRACT_ADDRESSES.Governance,
+        abi: governanceAbi,
+        functionName: 'voteProposal',
+        args: [proposalId, support],
+      })
+      await waitForTransactionReceipt(config, { hash: voteHash })
+      await refetchAllowance()
+      return { voteHash, approvalHash }
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error('投票失败')
+      ;(err as { stage?: string }).stage = 'vote'
+      throw err
+    } finally {
+      setIsVoting(false)
+    }
   }
 
-  return { vote, isPending }
+  return {
+    vote,
+    isPending: isVoting,
+    isApproving,
+    allowance,
+  }
 }
 
 export function useCreateProposal() {
-  const { writeContractAsync, isPending } = useWriteContract()
+  const { address } = useAccount()
+  const config = useConfig()
+  const { allowance, refetch: refetchAllowance } = useGovTokenAllowance()
+  const { writeContractAsync: writeGovernance } = useWriteContract()
+  const { writeContractAsync: writeGovToken } = useWriteContract()
+  const [isApproving, setIsApproving] = useState(false)
+  const [isCreating, setIsCreating] = useState(false)
 
   const createProposal = async (description: string, duration: number = 86400) => {
     if (!description.trim()) {
       throw new Error('提案描述不能为空')
     }
+    if (!address) {
+      throw Object.assign(new Error('请先连接钱包'), { stage: 'wallet' as const })
+    }
 
-    return await writeContractAsync({
-      address: CONTRACT_ADDRESSES.Governance,
-      abi: governanceAbi,
-      functionName: 'createProposal',
-      args: [description, BigInt(duration)],
-    })
+    let approvalHash: `0x${string}` | null = null
+
+    if (allowance < GOV_PROPOSAL_FEE) {
+      try {
+        setIsApproving(true)
+        approvalHash = await writeGovToken({
+          address: CONTRACT_ADDRESSES.GovToken,
+          abi: govTokenAbi,
+          functionName: 'approve',
+          args: [CONTRACT_ADDRESSES.Governance, GOV_PROPOSAL_FEE],
+        })
+        await waitForTransactionReceipt(config, { hash: approvalHash })
+        await refetchAllowance()
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error('授权失败')
+        ;(err as { stage?: string }).stage = 'approval'
+        throw err
+      } finally {
+        setIsApproving(false)
+      }
+    }
+
+    try {
+      setIsCreating(true)
+      const proposalHash = await writeGovernance({
+        address: CONTRACT_ADDRESSES.Governance,
+        abi: governanceAbi,
+        functionName: 'createProposal',
+        args: [description, BigInt(duration)],
+      })
+      await waitForTransactionReceipt(config, { hash: proposalHash })
+      await refetchAllowance()
+      return { proposalHash, approvalHash }
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error('创建提案失败')
+      ;(err as { stage?: string }).stage = 'proposal'
+      throw err
+    } finally {
+      setIsCreating(false)
+    }
   }
 
-  return { createProposal, isPending }
+  return {
+    createProposal,
+    isPending: isCreating,
+    isApproving,
+    allowance,
+  }
 }
 
 export function useRemovalVote(proposalId: number) {
@@ -232,7 +377,7 @@ export function useRemovalVote(proposalId: number) {
     address: CONTRACT_ADDRESSES.Governance,
     abi: governanceAbi,
     functionName: 'getRemovalVote',
-    args: [BigInt(proposalId)],
+    args: [proposalId],
     query: {
       enabled: proposalId > 0,
     },
@@ -275,7 +420,7 @@ export function useInitiateRemovalVote() {
       address: CONTRACT_ADDRESSES.Governance,
       abi: governanceAbi,
       functionName: 'initiateRemovalVote',
-      args: [BigInt(proposalId), reason, BigInt(duration)],
+      args: [proposalId, reason, BigInt(duration)],
     })
   }
 
@@ -290,7 +435,7 @@ export function useVoteOnRemoval() {
       address: CONTRACT_ADDRESSES.Governance,
       abi: governanceAbi,
       functionName: 'voteOnRemoval',
-      args: [BigInt(proposalId), support],
+      args: [proposalId, support],
     })
   }
 
@@ -305,7 +450,7 @@ export function useFinalizeRemovalVote() {
       address: CONTRACT_ADDRESSES.Governance,
       abi: governanceAbi,
       functionName: 'finalizeRemovalVote',
-      args: [BigInt(proposalId)],
+      args: [proposalId],
     })
   }
 
@@ -330,7 +475,7 @@ export function useRemovalEligibility() {
         eligible: false,
         qualifiesHighTier: false,
         qualifiesLowTier: false,
-        balance: 0n,
+        balance: BigInt(0),
       }
     }
 
@@ -347,7 +492,7 @@ export function useHasRemovalVoted(proposalId: number) {
     address: CONTRACT_ADDRESSES.Governance,
     abi: governanceAbi,
     functionName: 'hasRemovalVoted',
-    args: [BigInt(proposalId), address ?? ZERO_ADDRESS],
+    args: [proposalId, address ?? ZERO_ADDRESS],
     query: {
       enabled: !!address && proposalId > 0,
     },
