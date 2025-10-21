@@ -28,6 +28,7 @@ import { useAccount, useConfig, useReadContracts, useWriteContract } from 'wagmi
 import { waitForTransactionReceipt } from 'wagmi/actions';
 import { CONTRACT_ADDRESSES } from '@/lib/contracts';
 import { formatEther } from '@/lib/utils';
+import { formatUnits, parseUnits } from 'viem';
 import { toast } from 'sonner';
 import { ConnectButton } from "@/components/wallet/ConnectButton";
 import { useGovBalance } from '@/hooks/useGovBalance';
@@ -148,6 +149,8 @@ const tasks = [
     repeatable: true,
   },
 ];
+
+const GOV_UNIT = parseUnits('1', 18);
 
 const GOVERNANCE_TASK_GET_ABI = [
   {
@@ -445,7 +448,7 @@ export default function TasksPage() {
     const chainConfig = taskConfigs?.[index]?.result as
       | readonly [bigint, bigint, boolean, boolean]
       | undefined;
-    const reward = chainConfig ? chainConfig[0] : BigInt(task.reward) * (10n ** 18n);
+    const reward = chainConfig ? chainConfig[0] : BigInt(task.reward);
     const cooldownSeconds = chainConfig ? Number(chainConfig[1]) : task.defaultCooldownSeconds;
     const active = chainConfig ? chainConfig[2] : true;
     const repeatable = chainConfig ? chainConfig[3] : task.repeatable;
@@ -609,7 +612,7 @@ export default function TasksPage() {
             (() => {
               const index = tasks.findIndex((t) => t.id === task.id);
               const state = taskStates[index];
-              const rewardLabel = formatEther(state.reward);
+              const rewardLabel = formatUnits(state.reward * GOV_UNIT, 18);
 
               return (
             <TaskCard

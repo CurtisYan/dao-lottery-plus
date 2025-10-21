@@ -1,5 +1,6 @@
 import { type ClassValue, clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
+import { formatUnits } from 'viem'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -42,29 +43,22 @@ export function formatNumber(num: number | string, decimals = 2): string {
 }
 
 export function formatEther(wei: bigint | string, decimals = 4): string {
-  if (!wei) return '0';
-  
+  if (!wei) return '0'
+
   try {
-    const value = typeof wei === 'string' ? BigInt(wei) : wei;
-    const ether = Number(value) / 1e18;
-    
-    // 检查是否有小数部分
-    const hasDecimal = ether % 1 !== 0;
-    
-    // 如果没有小数部分，返回整数；如果有，则保留指定位数的小数
-    if (hasDecimal) {
-      // 对于非常小的数值，保留更多小数位
-      if (ether < 0.0001) {
-        return ether.toFixed(decimals);
-      }
-      
-      // 移除末尾的0
-      return ether.toFixed(decimals).replace(/\.?0+$/, '');
-    } else {
-      return Math.floor(ether).toString();
+    const value = typeof wei === 'string' ? BigInt(wei) : wei
+    const formatted = formatUnits(value, 18)
+
+    if (!formatted.includes('.')) {
+      return formatted
     }
+
+    const [integerPart, fractionPart] = formatted.split('.')
+    const trimmedFraction = fractionPart.slice(0, decimals).replace(/0+$/, '')
+
+    return trimmedFraction ? `${integerPart}.${trimmedFraction}` : integerPart
   } catch (error) {
-    console.error('formatEther error:', error);
-    return '0';
+    console.error('formatEther error:', error)
+    return '0'
   }
-} 
+}

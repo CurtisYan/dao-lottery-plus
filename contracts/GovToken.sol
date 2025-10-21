@@ -7,6 +7,8 @@ import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 
 contract GovToken is ERC20,ERC20Burnable,Ownable{
 
+    uint256 public constant UNIT = 1 ether;
+
     mapping(address=>bool) public isMinter;
 
     modifier onlyMinter(){
@@ -18,7 +20,7 @@ contract GovToken is ERC20,ERC20Burnable,Ownable{
             ERC20("GovToken","RWD")
             Ownable(msg.sender){
         isMinter[msg.sender] = true;
-        _mint(msg.sender, _initialSupply * 10 ** decimals());
+        _mint(msg.sender, _initialSupply * UNIT);
     }
 
     // 禁用普通转账

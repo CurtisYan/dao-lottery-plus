@@ -17,7 +17,7 @@ import { useAdmin } from '@/hooks/useAdmin'
 import { Badge } from '@/components/ui/Badge'
 import { useWriteContract, useConfig } from 'wagmi'
 import { ABIS } from '@/lib/contracts'
-import { parseEther } from 'viem'
+import { parseUnits } from 'viem'
 import { useChainModal } from '@rainbow-me/rainbowkit'
 
 export default function SettingsPage() {
@@ -241,7 +241,7 @@ export default function SettingsPage() {
             }
           ],
           functionName: 'mint',
-          args: [rewardAddress as `0x${string}`, parseEther(rewardAmount)],
+          args: [rewardAddress as `0x${string}`, parseUnits(rewardAmount, 18)],
           chainId: sepolia.id
         })
       } else if (rewardType === 'reward') {
@@ -260,7 +260,7 @@ export default function SettingsPage() {
             }
           ],
           functionName: 'mint',
-          args: [rewardAddress as `0x${string}`, parseEther(rewardAmount)],
+          args: [rewardAddress as `0x${string}`, parseUnits(rewardAmount, 18)],
           chainId: sepolia.id
         })
       } else if (rewardType === 'nft') {

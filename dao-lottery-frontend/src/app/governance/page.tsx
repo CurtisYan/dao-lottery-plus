@@ -195,7 +195,7 @@ const ProposalCard = ({
       const result = await vote(proposal.id, support)
 
       if (result?.approvalHash) {
-        toast.success(`授权成功，额度 ${GOV_VOTE_COST.toString()} GOV`)
+        toast.success(`授权成功，额度 ${formatUnits(GOV_VOTE_COST, 18)} GOV`)
       }
 
       toast.success(`投票${support ? '支持' : '反对'}成功`)
@@ -643,7 +643,7 @@ export default function GovernancePage() {
       const result = await createProposal(proposalDesc, durationInSeconds)
 
       if (result?.approvalHash) {
-        toast.success(`授权成功，额度 ${GOV_PROPOSAL_FEE.toString()} GOV`)
+        toast.success(`授权成功，额度 ${formatUnits(GOV_PROPOSAL_FEE, 18)} GOV`)
       }
 
       toast.success('提案创建成功！')

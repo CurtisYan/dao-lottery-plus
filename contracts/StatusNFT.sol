@@ -8,6 +8,7 @@ import "./GovToken.sol"; // 确保GovToken接口可用
 contract StatusNFT is ERC1155, Ownable {
     // 引入GovToken合约，用于查询余额
     GovToken public immutable govToken;
+    uint256 public immutable UNIT;
 
     // 定义不同等级的Token ID
     uint256 public constant SILVER_TIER_ID = 1;
@@ -16,10 +17,10 @@ contract StatusNFT is ERC1155, Ownable {
     uint256 public constant KING_TIER_ID = 4;
 
     // 定义每个等级所需的GovToken数量
-    uint256 public constant SILVER_REQUIREMENT = 500;
-    uint256 public constant GOLD_REQUIREMENT = 1000;
-    uint256 public constant DIAMOND_REQUIREMENT = 2000;
-    uint256 public constant KING_REQUIREMENT = 5000;
+    uint256 public immutable SILVER_REQUIREMENT;
+    uint256 public immutable GOLD_REQUIREMENT;
+    uint256 public immutable DIAMOND_REQUIREMENT;
+    uint256 public immutable KING_REQUIREMENT;
 
     // 存储每个Token ID对应的metadata URI
     mapping(uint256 => string) private _tokenURIs;
@@ -30,7 +31,13 @@ contract StatusNFT is ERC1155, Ownable {
     constructor(address _govTokenAddress) 
         ERC1155("") 
         Ownable(msg.sender){ // URI设为空字符串，因为我们会重写uri函数
-        govToken = GovToken(_govTokenAddress);
+        GovToken token = GovToken(_govTokenAddress);
+        govToken = token;
+        UNIT = token.UNIT();
+        SILVER_REQUIREMENT = 500 * UNIT;
+        GOLD_REQUIREMENT = 1000 * UNIT;
+        DIAMOND_REQUIREMENT = 2000 * UNIT;
+        KING_REQUIREMENT = 5000 * UNIT;
     }
     
     /**
@@ -41,16 +48,16 @@ contract StatusNFT is ERC1155, Ownable {
         uint256 currentTier = highestTierClaimed[msg.sender];
 
         // 从大到小
-        if (balance > KING_REQUIREMENT && currentTier < KING_TIER_ID){
+        if (balance >= KING_REQUIREMENT && currentTier < KING_TIER_ID){
             _mint(msg.sender, KING_TIER_ID, 1, "");
             highestTierClaimed[msg.sender] = KING_TIER_ID;
-        }else if(balance > DIAMOND_REQUIREMENT && currentTier < DIAMOND_TIER_ID){
+        }else if(balance >= DIAMOND_REQUIREMENT && currentTier < DIAMOND_TIER_ID){
             _mint(msg.sender, DIAMOND_TIER_ID, 1, "");
             highestTierClaimed[msg.sender] = DIAMOND_TIER_ID;
-        }else if(balance > GOLD_REQUIREMENT && currentTier < GOLD_TIER_ID){
-            _mint(msg.sender, GOLD_TIER_ID, 1, ""); 
+        }else if(balance >= GOLD_REQUIREMENT && currentTier < GOLD_TIER_ID){
+            _mint(msg.sender, GOLD_TIER_ID, 1, "");
             highestTierClaimed[msg.sender] = GOLD_TIER_ID;
-        }else if (balance > SILVER_REQUIREMENT && currentTier < SILVER_TIER_ID){
+        }else if (balance >= SILVER_REQUIREMENT && currentTier < SILVER_TIER_ID){
             _mint(msg.sender, SILVER_TIER_ID, 1, "");
             highestTierClaimed[msg.sender] = SILVER_TIER_ID;
         }else {

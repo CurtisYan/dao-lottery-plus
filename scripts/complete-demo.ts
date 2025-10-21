@@ -18,7 +18,7 @@ async function main() {
   console.log("🚀 第一阶段：部署智能合约");
   console.log("-".repeat(40));
 
-  const initialSupply = parseEther("1000000");
+  const initialSupply = 1_000_000n;
   const participationBaseURI = process.env.PARTICIPATION_BASE_URI!;
 
   // 部署所有合约

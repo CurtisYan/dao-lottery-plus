@@ -1,7 +1,7 @@
 // scripts/deploy.ts
 import hre from "hardhat";
 import "dotenv/config";
-import { formatEther, parseEther } from "viem";
+import { formatEther } from "viem";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from 'url';
@@ -83,7 +83,7 @@ async function main() {
   console.log("----------------------------------------------------");
 
   // 2. 定义初始参数
-  const initialSupply = parseEther("1000000"); // 假设初始供应量为 1,000,000
+  const initialSupply = 1_000_000n; // 初始供应量（按代币数量计算）
   const participationBaseURI = process.env.PARTICIPATION_BASE_URI!;
   if (!participationBaseURI) {
     throw new Error("PARTICIPATION_BASE_URI not found in .env file");
